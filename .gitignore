@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Test results
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Storage and auth
+storage/
+auth.json
+
+# Downloads and transcripts
+downloads/
+transcripts/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Screenshots
+*.png
+!test-results/**/*.png
