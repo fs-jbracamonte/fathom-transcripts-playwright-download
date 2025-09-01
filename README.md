@@ -28,13 +28,16 @@ A tool that automatically logs into Fathom.video and saves meeting transcripts a
    - Make a copy and rename it to `.env`
 
 2. **Edit the `.env` file** with your information:
-   ```
-   # Your Fathom login credentials
+   ```env
+   # Required: Your Fathom login credentials
    AUTH_USERNAME=your-email@example.com
    AUTH_PASSWORD=your-password
    
-   # How many meeting transcripts to extract (0 = none, 5 = last 5 meetings)
+   # Optional: How many meeting transcripts to extract (0 = none, 5 = last 5 meetings)
    MAX_MEETINGS_TO_VISIT=5
+   
+   # Optional: Authentication provider (auto|google|microsoft|password)
+   AUTH_PROVIDER=auto
    ```
 
 ### Step 4: Run the Tool
