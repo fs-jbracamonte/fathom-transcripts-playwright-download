@@ -753,6 +753,15 @@ test.describe('auth setup', () => {
 				console.info('================================================');
 				console.info('');
 				
+				// Track success and failures
+				const extractionResults: { 
+					successful: string[], 
+					failed: { url: string, reason: string }[] 
+				} = { 
+					successful: [], 
+					failed: [] 
+				};
+				
 				for (let i = 0; i < meetingsToVisit.length; i++) {
 					const meetingUrl = meetingsToVisit[i];
 					const meetingId = meetingUrl.split('/').pop();
@@ -760,14 +769,45 @@ test.describe('auth setup', () => {
 					console.info(`[auth] Visiting meeting ${i + 1}/${meetingsToVisit.length}: ${meetingId}`);
 					
 					try {
-						// Navigate to the meeting page
-						await page.goto(meetingUrl, { 
-							waitUntil: 'domcontentloaded',
-							timeout: 30000 
-						});
+						// Navigate to the meeting page with retry logic for timeouts
+						let pageLoaded = false;
+						let pageLoadAttempts = 0;
+						const maxPageLoadAttempts = 3;
 						
-						// Wait a bit for the page to load
-						await page.waitForTimeout(3000);
+						while (!pageLoaded && pageLoadAttempts < maxPageLoadAttempts) {
+							try {
+								if (pageLoadAttempts > 0) {
+									console.info(`[auth] Retry ${pageLoadAttempts}/${maxPageLoadAttempts} for loading meeting page...`);
+									// Refresh/reload the page on retry
+									await page.waitForTimeout(2000); // Wait before retry
+								}
+								
+								await page.goto(meetingUrl, { 
+									waitUntil: 'domcontentloaded',
+									timeout: 30000 
+								});
+								
+								// Wait a bit for the page to load
+								await page.waitForTimeout(3000);
+								
+								pageLoaded = true;
+								console.info(`[auth] ✅ Successfully loaded meeting page ${meetingId}`);
+							} catch (pageError: any) {
+								pageLoadAttempts++;
+								if (pageError.name === 'TimeoutError') {
+									console.warn(`[auth] Timeout loading meeting page (attempt ${pageLoadAttempts}/${maxPageLoadAttempts}): ${pageError.message}`);
+									if (pageLoadAttempts >= maxPageLoadAttempts) {
+										throw new Error(`Failed to load meeting page after ${maxPageLoadAttempts} attempts due to timeout`);
+									}
+								} else {
+									throw pageError; // Re-throw non-timeout errors
+								}
+							}
+						}
+						
+						if (!pageLoaded) {
+							throw new Error('Failed to load meeting page');
+						}
 						
 						// Optional: Wait for specific elements that indicate the page loaded
 						await page.waitForSelector('body', { timeout: 5000 }).catch(() => {
@@ -796,135 +836,245 @@ test.describe('auth setup', () => {
 							console.warn('[auth] Could not extract meeting details:', error);
 						}
 						
-						// Try to get transcript
-						try {
-							console.info('[auth] Looking for Transcript button...');
+						// Try to get transcript with retry logic
+						let transcriptExtracted = false;
+						let retryCount = 0;
+						const maxRetries = 5; // Increased from 3 to 5 for better success rate
+						const transcriptExtractionStartTime = Date.now();
+						const maxTranscriptExtractionTime = 120000; // 2 minutes max per meeting
+						
+						while (!transcriptExtracted && retryCount < maxRetries) {
+							// Check if we've exceeded the maximum time
+							if (Date.now() - transcriptExtractionStartTime > maxTranscriptExtractionTime) {
+								console.error(`[auth] Transcript extraction timeout after ${maxTranscriptExtractionTime/1000}s for meeting ${meetingId}`);
+								break;
+							}
 							
-							// Store current URL to check if we're still on the same page
-							const currentPageUrl = page.url();
-							
-							// Find and click the Transcript button
-							const transcriptButton = page.locator('button:has-text("Transcript")').first();
-							const transcriptButtonVisible = await transcriptButton.isVisible({ timeout: 5000 }).catch(() => false);
-							
-							if (transcriptButtonVisible) {
-								console.info('[auth] Clicking Transcript button...');
-								await transcriptButton.click({ timeout: 5000 }).catch((e) => {
-									console.warn('[auth] Failed to click Transcript button:', e.message);
-								});
-								await page.waitForTimeout(2000);
-								
-								// Check if we're still on the same page
-								if (page.url() !== currentPageUrl) {
-									console.warn('[auth] Page navigated after clicking Transcript button, skipping transcript extraction');
-									throw new Error('Page navigated away from meeting');
+							try {
+								if (retryCount > 0) {
+									console.info(`[auth] Retry attempt ${retryCount}/${maxRetries} for transcript extraction...`);
+									// Wait longer between retries to avoid rate limiting
+									await page.waitForTimeout(3000 + (retryCount * 1000)); // Incremental backoff
+									
+									// Reload the page for retry with timeout handling
+									try {
+										await page.goto(meetingUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+										await page.waitForTimeout(4000); // Give more time for page to stabilize
+									} catch (reloadError: any) {
+										console.warn(`[auth] Failed to reload page on retry ${retryCount}: ${reloadError.message}`);
+										// Continue anyway to try extraction
+									}
 								}
 								
-								// First try to extract transcript text directly from the page
-								let transcriptText = null;
-								console.info('[auth] Looking for transcript text on page...');
+								console.info('[auth] Looking for Transcript TAB to switch views...');
 								
-								// Common selectors for transcript content
-								const transcriptSelectors = [
-									'[class*="transcript"]',
-									'[data-testid*="transcript"]',
-									'[role="article"]',
-									'.transcript-content',
-									'.transcript-text',
-									'pre', // Sometimes transcripts are in pre tags
-								];
+								// Store current URL to check if we're still on the same page
+								const currentPageUrl = page.url();
 								
-								for (const selector of transcriptSelectors) {
+															// Wait for the page to be fully interactive before looking for tabs
+							await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {
+								console.info('[auth] Page has continuous network activity, proceeding...');
+							});
+							
+							// STEP 1: Click on the Transcript TAB to switch to transcript view
+							const transcriptTabSelectors = [
+								// Look for tab elements specifically
+								'[role="tab"]:has-text("Transcript")',
+								'button[role="tab"]:has-text("Transcript")',
+								'div[role="tab"]:has-text("Transcript")',
+								'a[role="tab"]:has-text("Transcript")',
+								// Look for unselected transcript tab
+								'[aria-selected="false"]:has-text("Transcript")',
+								// Generic tab selectors  
+								'button:text-is("Transcript")',
+								'.tab:has-text("Transcript")',
+								'.tabs button:has-text("Transcript")',
+								'nav button:has-text("Transcript")',
+								// Data attributes
+								'[data-tab="transcript"]',
+								'[data-testid*="transcript-tab"]'
+							];
+								
+								let transcriptTabFound = false;
+								
+								// Try to find and click the Transcript tab
+								for (const selector of transcriptTabSelectors) {
 									try {
-										const element = page.locator(selector).first();
-										if (await element.isVisible({ timeout: 1000 }).catch(() => false)) {
-											const text = await element.textContent();
-											if (text && text.length > 100) { // Assume transcript is at least 100 chars
-												console.info(`[auth] Found transcript text using selector: ${selector}`);
-												transcriptText = text;
+										const tab = page.locator(selector).first();
+										if (await tab.isVisible({ timeout: 1000 }).catch(() => false)) {
+											// Check if tab is already selected
+											const isSelected = await tab.getAttribute('aria-selected').catch(() => null);
+											if (isSelected === 'true') {
+												console.info('[auth] Transcript tab is already selected');
+												transcriptTabFound = true;
 												break;
 											}
+											
+											console.info(`[auth] Found transcript tab with selector: ${selector}, clicking...`);
+											await tab.click({ timeout: 5000 });
+											transcriptTabFound = true;
+											
+											// Wait for tab content to switch
+											console.info('[auth] Waiting for transcript content to load...');
+											await page.waitForTimeout(3000);
+											break;
 										}
 									} catch (e) {
 										// Continue to next selector
 									}
 								}
 								
-								// If we couldn't find transcript text directly, try the Copy button
-								if (!transcriptText) {
-									const copyButton = page.locator('button:has-text("Copy Transcript")').first();
-									const copyButtonVisible = await copyButton.isVisible({ timeout: 5000 }).catch(() => false);
+								if (!transcriptTabFound) {
+									console.warn('[auth] No Transcript tab found, page might already be showing transcript or has different layout');
+								}
+								
+								// STEP 2: Now look for and click the "Copy Transcript" button
+								console.info('[auth] Looking for Copy Transcript button...');
+								
+								// Try multiple copy button selectors
+								const copyButtonSelectors = [
+									'button:has-text("Copy Transcript")',
+									'button:text-is("Copy Transcript")',
+									'button[aria-label*="copy transcript" i]',
+									'[role="button"]:has-text("Copy Transcript")',
+									// Sometimes it might just say "Copy" when in transcript view
+									'button:text-is("Copy")',
+									'button[title*="Copy" i]',
+									// Icon buttons with copy functionality
+									'button[data-action="copy-transcript"]',
+									'button[data-testid*="copy-transcript"]'
+								];
+								
+								let copyButton = null;
+								let copyButtonVisible = false;
+								
+								// Try multiple attempts to find the copy button
+								let copyButtonSearchAttempts = 0;
+								const maxCopyButtonAttempts = 3;
+								
+								while (!copyButtonVisible && copyButtonSearchAttempts < maxCopyButtonAttempts) {
+									// Check if page is still valid
+									try {
+										await page.evaluate(() => true);
+									} catch (e) {
+										console.warn('[auth] Page no longer accessible, skipping copy button search');
+										break;
+									}
 									
-									if (copyButtonVisible) {
-										console.info('[auth] Clicking Copy Transcript button...');
-										
-										// Set up clipboard read before clicking
+									for (const selector of copyButtonSelectors) {
 										try {
-											// Grant clipboard permissions
-											await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-											
-											// Click the copy button
-											await copyButton.click();
-											await page.waitForTimeout(1500);
-											
-											// Try to read from clipboard with better error handling
-											transcriptText = await page.evaluate(async () => {
-												try {
-													// Check if page is still active
-													if (!window || !navigator || !navigator.clipboard) {
-														console.error('Clipboard API not available');
-														return null;
-													}
-													
-													const text = await navigator.clipboard.readText();
-													console.log('Clipboard text length:', text ? text.length : 0);
-													return text;
-												} catch (e) {
-													console.error('Failed to read clipboard:', e);
-													// Try alternative method
-													try {
-														// Sometimes the clipboard content is available via document.execCommand
-														const textarea = document.createElement('textarea');
-														document.body.appendChild(textarea);
-														textarea.focus();
-														document.execCommand('paste');
-														const text = textarea.value;
-														document.body.removeChild(textarea);
-														return text || null;
-													} catch (e2) {
-														console.error('Alternative clipboard read also failed:', e2);
-														return null;
-													}
-												}
-											}).catch((error) => {
-												console.warn('[auth] Could not read clipboard:', error.message);
-												return null;
-											});
-											
-											// If clipboard read failed, try looking for a success message or toast
-											if (!transcriptText) {
-												console.info('[auth] Clipboard read failed, checking for success indicators...');
-												
-												// Look for success toast/notification
-												const successToast = await page.locator('text=/copied|success/i').isVisible({ timeout: 2000 }).catch(() => false);
-												if (successToast) {
-													console.info('[auth] Copy success indicator found, but could not retrieve text');
-													// Mark as successful copy even if we couldn't read the text
-													transcriptText = '[Transcript was copied but could not be retrieved from clipboard]';
-												}
+											const button = page.locator(selector).first();
+											if (await button.isVisible({ timeout: 1000 }).catch(() => false)) {
+												copyButton = button;
+												copyButtonVisible = true;
+												console.info(`[auth] Found copy button with selector: ${selector}`);
+												break;
 											}
-										} catch (error) {
-											console.warn('[auth] Error during transcript copy operation:', error);
+										} catch (e) {
+											// Continue to next selector
 										}
-									} else {
-										console.info('[auth] Copy Transcript button not found');
+									}
+									
+									if (!copyButtonVisible) {
+										copyButtonSearchAttempts++;
+										if (copyButtonSearchAttempts < maxCopyButtonAttempts) {
+											console.info(`[auth] Copy button not found yet, waiting... (attempt ${copyButtonSearchAttempts}/${maxCopyButtonAttempts})`);
+											await page.waitForTimeout(2000);
+										}
 									}
 								}
 								
-								if (transcriptText) {
-										// Create filename from date
+								let transcriptText = null;
+								
+								if (copyButtonVisible && copyButton) {
+									console.info('[auth] Clicking Copy Transcript button...');
+									
+									// Set up clipboard read before clicking
+									try {
+										// Grant clipboard permissions
+										await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+										
+										// Wait for any loading overlays to disappear
+										const loaderSelectors = [
+											'ui-loader',
+											'.loader',
+											'.loading',
+											'[class*="loading"]',
+											'[class*="spinner"]',
+											'[aria-busy="true"]'
+										];
+										
+										for (const selector of loaderSelectors) {
+											const loader = page.locator(selector).first();
+											if (await loader.isVisible({ timeout: 500 }).catch(() => false)) {
+												console.info(`[auth] Waiting for loader to disappear: ${selector}`);
+												await loader.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {
+													console.warn('[auth] Loader still visible after 10s, attempting click anyway');
+												});
+											}
+										}
+										
+										// Click the copy button with force option to bypass any remaining overlays
+										try {
+											await copyButton.click({ force: true, timeout: 10000 });
+										} catch (clickError: any) {
+											console.warn('[auth] Failed to click copy button:', clickError.message);
+											// Try alternative click method
+											try {
+												await page.evaluate((selector) => {
+													const button = document.querySelector(selector);
+													if (button) {
+														(button as HTMLElement).click();
+													}
+												}, copyButtonSelectors[0]);
+											} catch (e) {
+												console.warn('[auth] Alternative click method also failed');
+											}
+										}
+										
+										await page.waitForTimeout(2000);
+										
+										// Try to read from clipboard
+										transcriptText = await page.evaluate(async () => {
+											try {
+												if (!window || !navigator || !navigator.clipboard) {
+													console.error('Clipboard API not available');
+													return null;
+												}
+												
+												const text = await navigator.clipboard.readText();
+												console.log('Clipboard text length:', text ? text.length : 0);
+												return text;
+											} catch (e) {
+												console.error('Failed to read clipboard:', e);
+												return null;
+											}
+										}).catch((error) => {
+											console.warn('[auth] Could not read clipboard:', error.message);
+											return null;
+										});
+										
+										// If clipboard read failed, check for success indicator
+										if (!transcriptText) {
+											console.info('[auth] Clipboard read failed, checking for success indicators...');
+											const successToast = await page.locator('text=/copied|success/i').isVisible({ timeout: 2000 }).catch(() => false);
+											if (successToast) {
+												console.info('[auth] Copy success indicator found, but could not retrieve text from clipboard');
+											}
+										}
+									} catch (error) {
+										console.warn('[auth] Error during transcript copy operation:', error);
+									}
+								} else {
+									console.warn('[auth] Copy Transcript button not found after tab click');
+								}
+								
+								// Save transcript if we got it
+								if (transcriptText && transcriptText.length > 100) {
+										// Create filename from date AND meeting ID to avoid collisions
 										const sanitizedDate = meetingDate.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-										const filename = `fathom_transcript_${sanitizedDate}.txt`;
+										const sanitizedName = meetingName.replace(/[^a-z0-9]/gi, '_').toLowerCase().substring(0, 30);
+										const filename = `transcript_${sanitizedDate}_${sanitizedName}_${meetingId}.txt`;
 										const filepath = path.join('transcripts', filename);
 										
 										// Ensure transcripts directory exists
@@ -940,16 +1090,30 @@ ${'='.repeat(80)}
 
 ${transcriptText}`;
 										
-										fs.writeFileSync(filepath, content, 'utf-8');
+																															fs.writeFileSync(filepath, content, 'utf-8');
 										console.info(`[auth] 📄 Transcript saved to: ${filepath}`);
+										transcriptExtracted = true;
+										extractionResults.successful.push(`${meetingName} (${meetingId})`);	
+								} else {
+									if (transcriptText) {
+										console.warn('[auth] Transcript text too short or invalid, not saving');
 									} else {
-										console.warn('[auth] Could not read transcript from clipboard');
+										console.warn('[auth] Could not extract transcript from clipboard');
 									}
-							} else {
-								console.info('[auth] Transcript button not found on this meeting page');
+								}
+							} catch (error) {
+								console.warn(`[auth] Error extracting transcript (attempt ${retryCount + 1}/${maxRetries}):`, error);
 							}
-						} catch (error) {
-							console.warn('[auth] Error extracting transcript:', error);
+							
+							retryCount++;
+						}
+						
+						if (!transcriptExtracted) {
+							console.error(`[auth] ❌ Failed to extract transcript for meeting ${meetingId} after ${maxRetries} attempts`);
+							extractionResults.failed.push({ 
+								url: meetingUrl, 
+								reason: `Failed after ${maxRetries} attempts - transcript button or content not accessible` 
+							});
 						}
 						
 						// Add a small delay between meetings to avoid rate limiting
@@ -958,6 +1122,10 @@ ${transcriptText}`;
 						}
 					} catch (error) {
 						console.warn(`[auth] Failed to visit meeting ${meetingId}:`, error);
+						extractionResults.failed.push({ 
+							url: meetingUrl, 
+							reason: `Failed to visit meeting page: ${error}` 
+						});
 						// Continue with next meeting even if one fails
 					}
 				}
@@ -967,7 +1135,36 @@ ${transcriptText}`;
 				await page.goto(env.baseURL, { waitUntil: 'domcontentloaded' });
 				await page.waitForTimeout(2000);
 				
+				// Display extraction summary
 				console.info('');
+				console.info('================================================');
+				console.info('📊 TRANSCRIPT EXTRACTION SUMMARY');
+				console.info('================================================');
+				console.info(`✅ Successfully extracted: ${extractionResults.successful.length}/${meetingsToVisit.length} transcripts`);
+				console.info(`❌ Failed to extract: ${extractionResults.failed.length}/${meetingsToVisit.length} transcripts`);
+				console.info('');
+				
+				if (extractionResults.successful.length > 0) {
+					console.info('✅ SUCCESSFUL EXTRACTIONS:');
+					extractionResults.successful.forEach((meeting, index) => {
+						console.info(`   ${index + 1}. ${meeting}`);
+					});
+					console.info('');
+				}
+				
+				if (extractionResults.failed.length > 0) {
+					console.info('❌ FAILED EXTRACTIONS:');
+					extractionResults.failed.forEach((failure, index) => {
+						console.info(`   ${index + 1}. Meeting: ${failure.url.split('/').pop()}`);
+						console.info(`      Reason: ${failure.reason}`);
+					});
+					console.info('');
+					console.info('💡 TIP: For failed extractions, try:');
+					console.info('   - Running the script again (some failures are temporary)');
+					console.info('   - Increasing timeout values in the script');
+					console.info('   - Running with PWDEBUG=1 to manually handle edge cases');
+				}
+				
 				console.info('================================================');
 				console.info('✅ MEETING VISITS COMPLETE');
 				console.info('================================================');
