@@ -2,6 +2,17 @@
 
 A tool that automatically logs into Fathom.video and saves meeting transcripts as text files.
 
+## ✨ Features
+
+- 🔐 **Supports multiple authentication methods**: Google SSO, Microsoft SSO, and password login
+- 📝 **Extracts full meeting transcripts**: Not just summaries
+- 🔄 **Smart retry logic**: Automatically retries failed extractions up to 5 times
+- ⏱️ **Timeout protection**: Won't hang indefinitely (2-minute limit per meeting)
+- 🎯 **Handles dynamic content**: Waits for loading overlays to disappear
+- 📊 **Detailed reporting**: Shows which transcripts succeeded or failed
+- 💾 **Unique filenames**: Prevents overwrites with date + meeting name + ID format
+- 🔒 **Secure mode**: Hide sensitive data during screen sharing
+
 ## 🚀 Quick Start
 
 ### Step 1: Install Required Software
@@ -60,8 +71,8 @@ MAX_MEETINGS_TO_VISIT=5 npx playwright test auth.setup --project=setup
 
 After running the tool, your transcripts will be saved in:
 - **Folder:** `transcripts/`
-- **Filename format:** `fathom_transcript_[date].txt`
-- Each file contains the full meeting transcript
+- **Filename format:** `transcript_[date]_[meeting_name]_[meeting_id].txt`
+- Each file contains the full meeting transcript with metadata
 
 ## 🔧 Troubleshooting
 
@@ -76,12 +87,17 @@ HEADLESS=true
 - The tool will wait up to 3 minutes for you to complete 2FA on your phone
 - Have your phone ready when running the script
 
-### Script Times Out
-**Solution:** Increase the wait time in your `.env` file:
+### Script Times Out or Hangs
+**Solution 1:** Increase the wait time in your `.env` file:
 ```
 WAIT_TIMEOUT_MS=30000
 NAV_TIMEOUT_MS=60000
 ```
+
+**Solution 2:** The script has built-in protections:
+- Automatically handles loading overlays
+- Has a 2-minute timeout per meeting transcript
+- Retries failed extractions up to 5 times
 
 ### Can't See What's Happening
 **Run in debug mode to watch the browser:**
@@ -99,19 +115,48 @@ PWDEBUG=1 npx playwright test auth.setup --project=setup
 - The `.env` file is automatically excluded from version control
 - Use `SECURE_MODE=true` to hide passwords during screen sharing
 
-## ⚙️ Optional Settings
+## ⚙️ All Environment Variables
 
-Add these to your `.env` file if needed:
+Complete list of available settings for your `.env` file:
 
+### Required Settings
 ```env
-# Run without showing browser window
+# Your Fathom login credentials
+AUTH_USERNAME=your-email@example.com
+AUTH_PASSWORD=your-password
+```
+
+### Optional Settings
+```env
+# Base URL for Fathom (default: https://fathom.video)
+BASE_URL=https://fathom.video
+
+# Authentication provider: auto|google|microsoft|password (default: auto)
+AUTH_PROVIDER=auto
+
+# Number of meetings to extract transcripts from (default: 0)
+MAX_MEETINGS_TO_VISIT=5
+
+# Run without showing browser window (default: false)
 HEADLESS=true
 
-# Hide passwords in logs (for demos)
+# Hide passwords in logs for demos/screen sharing (default: false)
 SECURE_MODE=true
 
-# Skip scrolling to load all meetings
-SKIP_SCROLL=true
+# Minimize browser window when running (default: false)
+MINIMIZED=false
+
+# Skip scrolling to load all meetings (default: false)
+SKIP_SCROLL=false
+
+# Path settings
+LOGIN_PATH=/login              # Login page path (default: /login)
+DATA_PAGE_PATH=/home           # Page after login (default: /home)
+DOWNLOAD_DIR=downloads         # Directory for downloads (default: downloads)
+
+# Timeout settings (in milliseconds)
+WAIT_TIMEOUT_MS=15000          # Element detection timeout (default: 15000)
+NAV_TIMEOUT_MS=30000           # Navigation timeout (default: 30000)
 ```
 
 ## 💡 Tips
@@ -124,9 +169,9 @@ SKIP_SCROLL=true
    - The tool saves your login session
    - Delete `storage/auth.json` to force a fresh login
 
-3. **Multiple Meetings Same Day:**
-   - Only the last meeting of each day is saved
-   - Each date gets one transcript file
+3. **Multiple Meetings:**
+   - Each meeting gets its own transcript file
+   - Files are named with date, meeting name, and unique ID to prevent overwrites
 
 ## ❓ Need Help?
 
