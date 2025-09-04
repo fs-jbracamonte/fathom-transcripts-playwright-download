@@ -8,7 +8,7 @@ const storageStatePath = path.resolve(__dirname, '..', 'storage', 'auth.json');
 test.describe('auth setup', () => {
 	test('login and save storage state', async ({ page, context }) => {
 		// Setup flows can be slow; extend the overall test timeout
-		test.setTimeout(120_000);
+		test.setTimeout(900_000);
 		
 		// Minimize window if requested (alternative to headless for demos)
 		if (env.minimized && !env.headless) {
@@ -24,6 +24,33 @@ test.describe('auth setup', () => {
 		const targetUrl = env.baseURL + env.loginPath;
 		await page.setDefaultNavigationTimeout(env.navTimeoutMs);
 		await page.setDefaultTimeout(env.detectTimeoutMs);
+
+		// Light stealth: mask common automation fingerprints before any scripts run
+		await page.addInitScript(() => {
+			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+			// @ts-ignore
+			Object.defineProperty(navigator, 'webdriver', { get: () => false });
+			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+			// @ts-ignore
+			window.chrome = { runtime: {} };
+			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+			// @ts-ignore
+			Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+			// @ts-ignore
+			Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+			const originalQuery = window.navigator.permissions?.query;
+			if (originalQuery) {
+				// Normalize notifications permission query to avoid headless-only value
+				// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+				// @ts-ignore
+				window.navigator.permissions.query = (parameters: any) => (
+					parameters && parameters.name === 'notifications'
+						? Promise.resolve({ state: Notification.permission })
+						: originalQuery(parameters)
+				);
+			}
+		});
 
 		// Navigate to login page
 		console.log(`[Auth] Navigating to login page...`);
@@ -109,7 +136,7 @@ test.describe('auth setup', () => {
 		let target = page;
 		try {
 			// Set up popup listener before clicking
-			const popupPromise = page.waitForEvent('popup', { timeout: 5000 });
+			const popupPromise = page.waitForEvent('popup').catch(() => null);
 			
 			console.log('[Auth] Clicking Google SSO button...');
 			
@@ -144,31 +171,24 @@ test.describe('auth setup', () => {
 					clicked = true;
 				}
 			}
-			
-			if (!clicked) {
-				throw new Error('Failed to click Google SSO button with any method');
-			}
-			
-			// Wait for either popup or navigation
-			const popup = await popupPromise.catch(() => null);
-			
-			if (popup) {
-				target = popup;
-				await popup.waitForLoadState('domcontentloaded');
-			} else {
-				// Check if we were redirected to Google login page
-				await page.waitForTimeout(2000); // Brief wait for redirect
-				const currentUrl = page.url();
-				if (currentUrl.includes('accounts.google.com')) {
-					target = page;
-				} else {
-					throw new Error('Neither popup nor redirect occurred after clicking Google button');
+				
+				if (!clicked) {
+					throw new Error('Failed to click Google SSO button with any method');
 				}
+				
+				// Resolve target as popup if present, else stay on current page
+				const popup = await page.waitForEvent('popup', { timeout: 10000 }).catch(() => null);
+				const redirected = await page
+					.waitForURL((url) => /accounts\.google\.com|google\.com\/signin/i.test(url.href), { timeout: 15000 })
+					.then(() => page)
+					.catch(() => null);
+				const maybeTarget = popup ?? redirected ?? page;
+				await maybeTarget.waitForLoadState('domcontentloaded').catch(() => {});
+				target = maybeTarget;
+			} catch (e) {
+				console.error('[Auth] Failed to handle Google SSO:', e);
+				throw e;
 			}
-		} catch (e) {
-			console.error('[Auth] Failed to handle Google SSO:', e);
-			throw e;
-		}
 
 		// Handle Google login flow
 		try {
@@ -561,169 +581,63 @@ test.describe('auth setup', () => {
 				document.head.appendChild(style);
 			});
 			
-			// Function to scroll and load all content
+			// Function to scroll and load all content (aligned with headed logic)
 			const scrollToLoadAll = async () => {
 				let previousHeight = 0;
 				let currentHeight = await page.evaluate(() => document.documentElement.scrollHeight);
 				let scrollAttempts = 0;
-				const maxScrollAttempts = 20; // Prevent infinite scrolling
+				const maxScrollAttempts = 60; // increased
 				let noNewContentCount = 0;
-				const maxNoNewContent = 3; // Stop after 3 attempts with no new content
-				
+				const maxNoNewContent = 5; // a bit more patience
 				console.info(`[auth] Initial page height: ${currentHeight}px`);
-				
-				// Initial scroll to top to show starting point
-				await page.evaluate(() => {
-					window.scrollTo({ top: 0, behavior: 'smooth' });
-				});
+				await page.evaluate(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); });
 				await page.waitForTimeout(1000);
-				
 				while (scrollAttempts < maxScrollAttempts && noNewContentCount < maxNoNewContent) {
 					scrollAttempts++;
 					previousHeight = currentHeight;
-					
-					// Update visual indicator
 					await page.evaluate((attempt) => {
-					const indicator = document.getElementById('scroll-indicator');
-					if (indicator) {
-						indicator.innerHTML = `📜 Scrolling... (Pass ${attempt})`;
-					}
+						const indicator = document.getElementById('scroll-indicator');
+						if (indicator) (indicator as HTMLElement).innerHTML = `📜 Scrolling... (Pass ${attempt})`;
 					}, scrollAttempts);
-					
-					// More aggressive scrolling - multiple techniques
 					console.info(`[auth] Scroll attempt ${scrollAttempts}: Starting from height ${currentHeight}px`);
-					
-					// Method 1: Standard scroll to bottom
-					await page.evaluate(() => {
-						window.scrollTo(0, document.documentElement.scrollHeight);
-					});
+					await page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight); });
+					await page.waitForTimeout(700);
+					await page.evaluate(() => { const els = document.querySelectorAll('*'); if (els.length > 0) (els[els.length-1] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'end' }); });
 					await page.waitForTimeout(500);
-					
-					// Method 2: Scroll into view of last element
-					await page.evaluate(() => {
-						const elements = document.querySelectorAll('*');
-						if (elements.length > 0) {
-							elements[elements.length - 1].scrollIntoView({ behavior: 'smooth', block: 'end' });
-						}
-					});
+					await page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight + 1500); });
 					await page.waitForTimeout(500);
-					
-					// Method 3: Force scroll beyond current height
-					await page.evaluate(() => {
-						window.scrollTo(0, document.documentElement.scrollHeight + 1000);
-					});
-					await page.waitForTimeout(500);
-					
-					// Method 4: Trigger scroll event manually
-					await page.evaluate(() => {
-						window.dispatchEvent(new Event('scroll'));
-						document.dispatchEvent(new Event('scroll'));
-					});
-					
-					// Method 5: Use keyboard to scroll (sometimes more reliable for lazy loading)
+					await page.evaluate(() => { window.dispatchEvent(new Event('scroll')); document.dispatchEvent(new Event('scroll')); });
 					await page.keyboard.press('End');
 					await page.waitForTimeout(500);
-					
-					// Method 6: Mouse wheel scroll
-					await page.mouse.wheel(0, 1000);
-					await page.waitForTimeout(500);
-					
-					// Wait longer for lazy loading to trigger
-					console.info(`[auth] Waiting for new content to load...`);
+					await page.mouse.wheel(0, 1200);
 					await page.waitForTimeout(2000);
-					
-					// Check if there's a loading indicator and wait for it to disappear
 					const loadingIndicator = page.locator('[class*="loading"], [class*="spinner"], [class*="loader"], [data-testid*="loading"]').first();
-					if (await loadingIndicator.isVisible().catch(() => false)) {
-						console.info('[auth] Waiting for loading indicator to disappear...');
-						await loadingIndicator.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {
-							console.info('[auth] Loading indicator still visible, continuing...');
-						});
-					}
-					
-					// Get new height after scroll and wait
+					if (await loadingIndicator.isVisible().catch(() => false)) { console.info('[auth] Waiting for loading indicator to disappear...'); await loadingIndicator.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { console.info('[auth] Loader still visible, continuing...'); }); }
 					currentHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-					
-					// Check if we've loaded new content
-					if (currentHeight > previousHeight) {
-						console.info(`[auth] ✅ Loaded more content! Page height: ${previousHeight}px -> ${currentHeight}px (${currentHeight - previousHeight}px added)`);
-						noNewContentCount = 0; // Reset counter when new content loads
-					} else {
-						noNewContentCount++;
-						console.info(`[auth] No new content loaded. Same height: ${currentHeight}px (attempt ${noNewContentCount}/${maxNoNewContent})`);
-					}
+					if (currentHeight > previousHeight) { console.info(`[auth] ✅ Loaded +${currentHeight - previousHeight}px`); noNewContentCount = 0; }
+					else { noNewContentCount++; console.info(`[auth] No new content (streak ${noNewContentCount}/${maxNoNewContent})`); }
 				}
-				
-				// Log final status
-				if (noNewContentCount >= maxNoNewContent) {
-					console.info(`[auth] Stopped scrolling: No new content after ${maxNoNewContent} attempts`);
-				} else if (scrollAttempts >= maxScrollAttempts) {
-					console.info(`[auth] Stopped scrolling: Reached maximum attempts (${maxScrollAttempts})`);
-				}
-				
-				// Final scroll to top then bottom to ensure everything is loaded
-				await page.evaluate(() => {
-					window.scrollTo({ top: 0, behavior: 'smooth' });
-				});
+				if (noNewContentCount >= maxNoNewContent) console.info(`[auth] Stopped: No new content after ${maxNoNewContent} attempts`);
+				else if (scrollAttempts >= maxScrollAttempts) console.info(`[auth] Stopped: Reached maximum attempts (${maxScrollAttempts})`);
+				await page.evaluate(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); });
 				await page.waitForTimeout(500);
-				await page.evaluate(() => {
-					window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-				});
+				await page.evaluate(() => { window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }); });
 				await page.waitForTimeout(1000);
-				
-				// Extract all meeting links from the page
 				const meetingLinks = await page.evaluate(() => {
-					// Find all links to fathom.video/calls
 					const links = document.querySelectorAll('a[href*="fathom.video/calls/"]');
 					const uniqueLinks = new Set<string>();
-					
-					links.forEach(link => {
-						const href = (link as HTMLAnchorElement).href;
-						if (href && href.includes('fathom.video/calls/')) {
-							uniqueLinks.add(href);
-						}
-					});
-					
+					links.forEach(link => { const href = (link as HTMLAnchorElement).href; if (href && href.includes('fathom.video/calls/')) uniqueLinks.add(href); });
 					return Array.from(uniqueLinks);
 				});
-				
-				console.info(`[auth] Found ${meetingLinks.length} meeting link(s)`);
-				
-				// Update indicator with final count
 				await page.evaluate((count) => {
 					const indicator = document.getElementById('scroll-indicator');
 					if (indicator) {
-						if (count > 0) {
-							indicator.innerHTML = `✅ Found ${count} meeting(s)!`;
-							indicator.style.background = '#4CAF50';
-						} else {
-							indicator.innerHTML = `✅ Scrolling complete!`;
-							indicator.style.background = '#2196F3';
-						}
+						if (count > 0) { indicator.innerHTML = `✅ Found ${count} meeting(s)!`; (indicator as HTMLElement).style.background = '#4CAF50'; }
+						else { indicator.innerHTML = `✅ Scrolling complete!`; (indicator as HTMLElement).style.background = '#2196F3'; }
 					}
-				}, meetingLinks.length);
-				
-				if (meetingLinks.length > 0) {
-					console.info(`[auth] Meeting URLs extracted:`);
-					meetingLinks.forEach((link, index) => {
-						console.info(`  [${index + 1}/${meetingLinks.length}] ${link}`);
-					});
-				} else {
-					console.info('[auth] No meeting links found on the page.');
-				}
-				
-								// Keep indicator visible for 3 seconds then fade out
-				await page.waitForTimeout(3000);
-				await page.evaluate(() => {
-					const indicator = document.getElementById('scroll-indicator');
-					if (indicator) {
-						indicator.style.transition = 'opacity 1s ease-out';
-						indicator.style.opacity = '0';
-						setTimeout(() => indicator.remove(), 1000);
-					}
-				});
-				
-				// Return the meeting links from the function
+				}, (await page.evaluate(() => document.querySelectorAll('a[href*="fathom.video/calls/"]').length)) as any);
+				await page.waitForTimeout(2000);
+				await page.evaluate(() => { const indicator = document.getElementById('scroll-indicator'); if (indicator) { (indicator as HTMLElement).style.transition = 'opacity 1s ease-out'; (indicator as HTMLElement).style.opacity = '0'; setTimeout(() => indicator.remove(), 1000); } });
 				return meetingLinks;
 			}
 			
@@ -1035,33 +949,58 @@ test.describe('auth setup', () => {
 										
 										await page.waitForTimeout(2000);
 										
-										// Try to read from clipboard
-										transcriptText = await page.evaluate(async () => {
-											try {
-												if (!window || !navigator || !navigator.clipboard) {
-													console.error('Clipboard API not available');
+										// Prefer clipboard; if API is unavailable, fall back to DOM extraction
+										const clipboardAvailable = await page.evaluate(() => !!(navigator && (navigator as any).clipboard)).catch(() => false);
+										if (clipboardAvailable) {
+											// Try to read from clipboard
+											transcriptText = await page.evaluate(async () => {
+												try {
+													const text = await navigator.clipboard.readText();
+													console.log('Clipboard text length:', text ? text.length : 0);
+													return text;
+												} catch (e) {
+													console.error('Failed to read clipboard:', e);
 													return null;
 												}
-												
-												const text = await navigator.clipboard.readText();
-												console.log('Clipboard text length:', text ? text.length : 0);
-												return text;
-											} catch (e) {
-												console.error('Failed to read clipboard:', e);
+											}).catch((error) => {
+												console.warn('[auth] Could not read clipboard:', (error as any).message || error);
 												return null;
+											});
+											
+											// If clipboard read failed, check for success indicator
+											if (!transcriptText) {
+												console.info('[auth] Clipboard read failed, checking for success indicators...');
+												const successToast = await page.locator('text=/copied|success/i').isVisible({ timeout: 2000 }).catch(() => false);
+												if (successToast) {
+													console.info('[auth] Copy success indicator found, but could not retrieve text from clipboard');
+												}
 											}
-										}).catch((error) => {
-											console.warn('[auth] Could not read clipboard:', error.message);
-											return null;
-										});
-										
-										// If clipboard read failed, check for success indicator
-										if (!transcriptText) {
-											console.info('[auth] Clipboard read failed, checking for success indicators...');
-											const successToast = await page.locator('text=/copied|success/i').isVisible({ timeout: 2000 }).catch(() => false);
-											if (successToast) {
-												console.info('[auth] Copy success indicator found, but could not retrieve text from clipboard');
-											}
+										} else {
+											console.info('[auth] Clipboard API not available, attempting DOM transcript extraction...');
+											transcriptText = await page.evaluate(() => {
+												// Try common transcript containers
+												const selectors = [
+													'[data-testid*="transcript"]',
+													'[class*="transcript"]',
+													'[aria-label*="transcript" i]',
+													'section[aria-label*="transcript" i]',
+													'main [class*="transcript"]'
+												];
+												for (const selector of selectors) {
+													const container = document.querySelector(selector) as HTMLElement | null;
+													if (container) {
+														const nodes = container.querySelectorAll('li, p, div');
+														const lines: string[] = [];
+														nodes.forEach((n) => {
+															const t = (n as HTMLElement).innerText?.trim();
+															if (t) lines.push(t);
+														});
+														const text = (lines.join('\n').trim() || (container as any).innerText?.trim() || container.textContent?.trim() || '').trim();
+														if (text && text.length > 0) return text;
+													}
+												}
+												return null;
+											}).catch(() => null as any);
 										}
 									} catch (error) {
 										console.warn('[auth] Error during transcript copy operation:', error);

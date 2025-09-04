@@ -6,6 +6,8 @@
     "prepare": "node -e \"require('fs').mkdirSync('downloads',{recursive:true})\"",
     "install:browsers": "npx --yes playwright install",
     "test": "playwright test",
+    "test:setup": "playwright test --project=setup",
+    "test:setup:headed": "playwright test --project=setup-headed",
     "test:headed": "playwright test --headed",
     "test:ui": "playwright test --ui",
     "codegen": "playwright codegen",

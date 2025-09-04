@@ -57,6 +57,7 @@ export default defineConfig({
 						'--flag-switches-begin',
 						'--disable-site-isolation-trials',
 						'--flag-switches-end',
+						'--disable-popup-blocking',
 						// Additional anti-detection for headless
 						'--no-sandbox',
 						'--disable-setuid-sandbox',
