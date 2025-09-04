@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "prepare": "node -e \"require('fs').mkdirSync('downloads',{recursive:true})\"",
-    "install:browsers": "npx --yes playwright install",
+    "install:browsers": "npx --yes playwright install chromium",
     "test": "playwright test",
     "test:setup": "playwright test --project=setup",
     "test:setup:headed": "playwright test --project=setup-headed",
@@ -12,8 +12,14 @@
     "test:ui": "playwright test --ui",
     "codegen": "playwright codegen",
     "format": "npx --yes prettier -w .",
+    "electron": "electron .",
     "electron:dev": "cross-env NODE_ENV=development electron .",
-    "electron:build": "electron-builder --win"
+    "prepare-build": "node scripts/prepare-build.js",
+    "dist": "npm run prepare-build && electron-builder",
+    "dist-win": "npm run prepare-build && electron-builder --win",
+    "dist-mac": "npm run prepare-build && electron-builder --mac",
+    "dist-linux": "npm run prepare-build && electron-builder --linux",
+    "postinstall": "playwright install chromium"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
@@ -55,31 +61,59 @@
   "build": {
     "appId": "com.fathom.transcripts",
     "productName": "Fathom Transcript Extractor",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
     "files": [
       "electron/**/*",
       "public/**/*",
       "tests/**/*",
       "utils/**/*",
       "playwright.config.ts",
-      "storage/**/*",
+      "tsconfig.json",
       "package.json",
       "node_modules/**/*",
+      "!node_modules/**/test/**",
+      "!node_modules/**/*.map",
       "!test-results/**",
-      "!playwright-report/**"
+      "!playwright-report/**",
+      "!dist/**/*",
+      "!transcripts/**/*",
+      "!downloads/**/*"
     ],
+    "asar": false,
+    "includeSubNodeModules": true,
     "extraResources": [
       {
         "from": "storage",
-        "to": "storage"
+        "to": "storage",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "${env.LOCALAPPDATA}/ms-playwright",
+        "to": "playwright-browsers",
+        "filter": ["chromium-*/**/*"]
       }
     ],
-    "directories": {
-      "buildResources": "build"
-    },
     "win": {
-      "target": [
-        "nsis"
-      ]
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": true
     }
   }
 }

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
 	checkBrowsers: () => ipcRenderer.invoke('tools:checkBrowsers'),
 	openTranscripts: () => ipcRenderer.invoke('fs:openTranscripts'),
 	openReport: () => ipcRenderer.invoke('fs:openReport'),
+	selectFolder: () => ipcRenderer.invoke('fs:selectFolder'),
 	loadSettings: () => ipcRenderer.invoke('settings:load'),
 	saveSettings: (partial) => ipcRenderer.invoke('settings:save', partial),
 	setSecret: ({ account, password }) => ipcRenderer.invoke('keytar:set', { account, password }),

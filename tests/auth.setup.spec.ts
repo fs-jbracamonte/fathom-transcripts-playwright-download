@@ -5,6 +5,15 @@ import { env } from '../utils/env';
 
 const storageStatePath = path.resolve(__dirname, '..', 'storage', 'auth.json');
 
+// Get transcript path from environment or use default
+const getTranscriptPath = () => {
+	const customPath = process.env.TRANSCRIPT_PATH;
+	if (customPath && customPath.trim()) {
+		return customPath;
+	}
+	return path.join(__dirname, '..', 'transcripts');
+};
+
 test.describe('auth setup', () => {
 	test('login and save storage state', async ({ page, context }) => {
 		// Setup flows can be slow; extend the overall test timeout
@@ -696,6 +705,9 @@ test.describe('auth setup', () => {
 			console.info('================================================');
 			console.info(`📊 MEETING DISCOVERY COMPLETE`);
 			console.info(`Found ${allMeetingLinks.length} total meetings on the page`);
+			if (process.env.TRANSCRIPT_PATH) {
+				console.info(`Transcripts will be saved to: ${getTranscriptPath()}`);
+			}
 			console.info('================================================');
 			console.info('');
 			
@@ -1058,10 +1070,11 @@ test.describe('auth setup', () => {
 										const sanitizedDate = meetingDate.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 										const sanitizedName = meetingName.replace(/[^a-z0-9]/gi, '_').toLowerCase().substring(0, 30);
 										const filename = `transcript_${sanitizedDate}_${sanitizedName}_${meetingId}.txt`;
-										const filepath = path.join('transcripts', filename);
+										const transcriptsDir = getTranscriptPath();
+										const filepath = path.join(transcriptsDir, filename);
 										
 										// Ensure transcripts directory exists
-										fs.mkdirSync('transcripts', { recursive: true });
+										fs.mkdirSync(transcriptsDir, { recursive: true });
 										
 										// Save transcript to file
 										const content = `Meeting: ${meetingName}

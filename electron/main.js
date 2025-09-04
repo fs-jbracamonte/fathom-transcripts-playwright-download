@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -152,6 +152,19 @@ function existsChromiumInLocalBrowsers(cwd) {
 }
 
 function isChromiumInstalled(cwd) {
+	// Check for pre-bundled browsers in production
+	if (app.isPackaged) {
+		const bundledBrowsersPath = path.join(process.resourcesPath, 'playwright-browsers');
+		try {
+			if (fs.existsSync(bundledBrowsersPath)) {
+				const entries = fs.readdirSync(bundledBrowsersPath, { withFileTypes: true });
+				if (entries.some(e => e.isDirectory() && e.name.toLowerCase().startsWith('chromium-'))) {
+					return true;
+				}
+			}
+		} catch {}
+	}
+	
 	return existsChromiumInMsPlaywright() || existsChromiumInLocalBrowsers(cwd);
 }
 
@@ -245,7 +258,13 @@ ipcMain.handle('run:start', async (event, settings) => {
 		NAV_TIMEOUT_MS: String(settings.navTimeoutMs ?? ''),
 		MAX_MEETINGS_TO_VISIT: String(settings.maxMeetings ?? '0'),
 		DOWNLOAD_DIR: settings.downloadDir || 'downloads',
+		TRANSCRIPT_PATH: settings.transcriptPath || '',
 	};
+	
+	// Use bundled browsers in production
+	if (app.isPackaged) {
+		env.PLAYWRIGHT_BROWSERS_PATH = path.join(process.resourcesPath, 'playwright-browsers');
+	}
 
 	const child = spawn(bin, ['test', 'auth.setup', '--project=setup'], {
 		cwd,
@@ -278,6 +297,14 @@ ipcMain.handle('run:cancel', async () => {
 
 ipcMain.handle('tools:installBrowsers', async () => {
 	if (!mainWindow) return { started: false };
+	
+	// In production with bundled browsers, skip installation
+	if (app.isPackaged) {
+		mainWindow?.webContents.send('install:log', 'Browsers are pre-bundled in this version.');
+		mainWindow?.webContents.send('install:end', { code: 0 });
+		return { started: true };
+	}
+	
 	const cwd = path.join(__dirname, '..');
 	const bin = playwrightBin(cwd);
 	const child = spawn(bin, ['install', 'chromium'], { cwd, env: process.env, shell: process.platform === 'win32' });
@@ -292,6 +319,16 @@ ipcMain.handle('tools:installBrowsers', async () => {
 });
 
 ipcMain.handle('fs:openTranscripts', async () => {
+	// Get the transcript path from settings if available
+	try {
+		const settings = readSettingsFromDisk();
+		if (settings && settings.transcriptPath && settings.transcriptPath.trim()) {
+			await shell.openPath(settings.transcriptPath);
+			return { opened: true };
+		}
+	} catch {}
+	
+	// Fall back to default transcripts folder
 	const transcripts = path.join(path.join(__dirname, '..'), 'transcripts');
 	await shell.openPath(transcripts);
 	return { opened: true };
@@ -301,4 +338,17 @@ ipcMain.handle('fs:openReport', async () => {
 	const report = path.join(path.join(__dirname, '..'), 'playwright-report', 'index.html');
 	await shell.openPath(report);
 	return { opened: true };
+});
+
+ipcMain.handle('fs:selectFolder', async () => {
+	const result = await dialog.showOpenDialog(mainWindow, {
+		properties: ['openDirectory'],
+		title: 'Select Transcript Save Location',
+		buttonLabel: 'Select Folder'
+	});
+	
+	if (!result.canceled && result.filePaths.length > 0) {
+		return { folderPath: result.filePaths[0] };
+	}
+	return { folderPath: null };
 });

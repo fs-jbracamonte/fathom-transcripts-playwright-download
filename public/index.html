@@ -93,6 +93,14 @@
 					<div id="err-meetings" class="error" style="display:none"></div>
 				</div>
 			</div>
+			<div class="field">
+				<label>Transcript Save Location</label>
+				<div style="display: flex; gap: 8px;">
+					<input type="text" id="transcriptPath" placeholder="Click Browse to select folder..." readonly style="flex: 1; cursor: pointer;">
+					<button type="button" class="secondary" id="btn-browse-transcript" style="padding: 8px 12px;">Browse</button>
+				</div>
+				<div id="err-transcript-path" class="error" style="display:none"></div>
+			</div>
 			<div class="helper">Runs headless and masks sensitive info in logs. Advanced options use safe defaults.</div>
 			<div class="actions" style="margin-top:10px;">
 				<button id="btn-start">Start Extraction</button>
@@ -119,6 +127,7 @@
 			loginPath: 'users/sign_in',
 			dataPagePath: 'home',
 			downloadDir: 'downloads',
+			transcriptPath: '', // Empty means use default 'transcripts' folder
 			waitTimeoutMs: 15000,
 			navTimeoutMs: 30000,
 			headless: true,
@@ -169,6 +178,7 @@
 				waitTimeoutMs: DEFAULTS.waitTimeoutMs,
 				navTimeoutMs: DEFAULTS.navTimeoutMs,
 				downloadDir: DEFAULTS.downloadDir,
+				transcriptPath: $('transcriptPath').value.trim(),
 			};
 		}
 
@@ -184,6 +194,7 @@
 			setFieldError('err-username','');
 			setFieldError('err-password','');
 			setFieldError('err-meetings','');
+			setFieldError('err-transcript-path','');
 
 			if (!settings.username) { setFieldError('err-username','Username is required'); ok = false; }
 			else if (!isValidEmail(settings.username)) { setFieldError('err-username','Enter a valid email'); ok = false; }
@@ -191,6 +202,8 @@
 			if (!settings.password) { setFieldError('err-password','Password is required'); ok = false; }
 
 			if (!Number.isInteger(settings.maxMeetings) || settings.maxMeetings < 0) { setFieldError('err-meetings','Enter a number >= 0'); ok = false; }
+
+			// Transcript path is optional - empty means use default
 
 			return ok;
 		}
@@ -202,7 +215,7 @@
 		}
 
 		function setRunning(isRunning) {
-			['authProvider','username','password','maxMeetings','btn-start','btn-install'].forEach(id => {
+			['authProvider','username','password','maxMeetings','transcriptPath','btn-browse-transcript','btn-start','btn-install'].forEach(id => {
 				const el = $(id);
 				if (el) el.disabled = isRunning || (id === 'btn-start' && !browsersInstalled);
 			});
@@ -229,6 +242,7 @@
 				if (s.authProvider) $('authProvider').value = s.authProvider;
 				if (s.username) $('username').value = s.username;
 				if (Number.isInteger(s.maxMeetings)) $('maxMeetings').value = String(s.maxMeetings);
+				if (s.transcriptPath) $('transcriptPath').value = s.transcriptPath;
 				if (s.username) {
 					const sec = await window.api.getSecret({ account: s.username });
 					if (sec?.ok && sec.password) $('password').value = sec.password;
@@ -278,7 +292,7 @@
 			setRunning(true);
 			appendLog('Starting extraction (browser will run in background)...');
 			try {
-				await window.api.saveSettings({ authProvider: settings.authProvider, username: settings.username, maxMeetings: settings.maxMeetings });
+				await window.api.saveSettings({ authProvider: settings.authProvider, username: settings.username, maxMeetings: settings.maxMeetings, transcriptPath: settings.transcriptPath });
 				if (settings.username && settings.password) {
 					await window.api.setSecret({ account: settings.username, password: settings.password });
 				}
@@ -304,6 +318,23 @@
 
 		$('btn-open-transcripts').addEventListener('click', () => window.api.openTranscripts());
 		$('btn-open-report').addEventListener('click', () => window.api.openReport());
+		
+		// Browse button for transcript path
+		$('btn-browse-transcript').addEventListener('click', async () => {
+			try {
+				const result = await window.api.selectFolder();
+				if (result && result.folderPath) {
+					$('transcriptPath').value = result.folderPath;
+				}
+			} catch (e) {
+				appendLog('Failed to select folder: ' + (e?.message || e), true);
+			}
+		});
+		
+		// Allow clicking the input field to also browse
+		$('transcriptPath').addEventListener('click', () => {
+			$('btn-browse-transcript').click();
+		});
 
 		window.api.onRunLog((line) => appendLog(line));
 		window.api.onRunEnd(({ code }) => {
