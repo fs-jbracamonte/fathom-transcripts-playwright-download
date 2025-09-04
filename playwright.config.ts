@@ -18,6 +18,7 @@ const downloadDir = path.resolve(
 	process.env.DOWNLOAD_DIR || 'downloads'
 );
 
+
 fs.mkdirSync(path.dirname(storageStatePath), { recursive: true });
 fs.mkdirSync(downloadDir, { recursive: true });
 
@@ -48,27 +49,17 @@ export default defineConfig({
 				channel: 'chrome',
 				viewport: { width: 1920, height: 1080 },
 				userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				// Use persistent context to emulate a real profile
+				// userDataDir is not a valid 'use' property; set via launchOptions under chromium
 				launchOptions: {
 					ignoreDefaultArgs: ['--enable-automation'],
 					args: [
 						'--disable-blink-features=AutomationControlled',
-						'--disable-web-security',
-						'--disable-features=IsolateOrigins,site-per-process',
-						'--flag-switches-begin',
-						'--disable-site-isolation-trials',
-						'--flag-switches-end',
-						'--disable-popup-blocking',
-						// Additional anti-detection for headless
-						'--no-sandbox',
-						'--disable-setuid-sandbox',
-						'--disable-dev-shm-usage',
-						'--disable-accelerated-2d-canvas',
-						'--no-first-run',
-						'--no-zygote',
-						'--disable-gpu',
 						'--window-size=1920,1080',
-						'--start-maximized',
-						'--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+						'--window-position=-2400,-2400', // Start window off-screen
+						'--no-first-run',
+						'--no-default-browser-check',
+						// Minimal args to reduce detection
 					],
 					// Use headless mode if requested
 					headless: process.env.HEADLESS === 'true' || process.env.SECURE_MODE === 'true',

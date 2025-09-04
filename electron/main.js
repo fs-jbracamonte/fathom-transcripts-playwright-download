@@ -235,9 +235,11 @@ ipcMain.handle('run:start', async (event, settings) => {
 		AUTH_PROVIDER: settings.authProvider || 'auto',
 		AUTH_USERNAME: settings.username || '',
 		AUTH_PASSWORD: resolvedPassword,
-		HEADLESS: boolToStr(!!settings.headless),
+		// Force headed mode for better Google auth compatibility
+		HEADLESS: 'false',
 		SECURE_MODE: boolToStr(!!settings.secureMode),
-		MINIMIZED: boolToStr(!!settings.minimized),
+		// Always minimize when running from Electron
+		MINIMIZED: 'true',
 		SKIP_SCROLL: boolToStr(!!settings.skipScroll),
 		WAIT_TIMEOUT_MS: String(settings.waitTimeoutMs ?? ''),
 		NAV_TIMEOUT_MS: String(settings.navTimeoutMs ?? ''),

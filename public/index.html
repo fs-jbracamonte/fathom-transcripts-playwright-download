@@ -19,11 +19,12 @@
 			--error: #ff6b6b;
 		}
 		* { box-sizing: border-box; }
-		body { background: var(--md-bg); color: var(--md-text); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; }
+		body { background: var(--md-bg); color: var(--md-text); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; overflow: hidden; height: 100vh; }
 		header { padding: 16px 22px; border-bottom: 1px solid var(--md-border); background: linear-gradient(180deg, #0e1420, #0b0f14 60%); display: flex; align-items: center; justify-content: space-between; }
 		h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
-		.container { display: grid; grid-template-columns: 420px 1fr; gap: 16px; padding: 16px; height: calc(100vh - 58px); }
-		.card { background: var(--md-surface); border: 1px solid var(--md-border); border-radius: var(--radius); padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
+		.container { display: grid; grid-template-columns: 420px 1fr; gap: 16px; padding: 16px; height: calc(100vh - 58px); overflow: hidden; }
+		.card { background: var(--md-surface); border: 1px solid var(--md-border); border-radius: var(--radius); padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.2); display: flex; flex-direction: column; }
+		.card:last-child { min-height: 0; overflow: hidden; }
 		.card h2 { font-size: 13px; color: var(--md-subtext); font-weight: 600; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .6px; }
 		.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 		.field { margin-bottom: 10px; }
@@ -35,7 +36,7 @@
 		button.secondary { background: #233045; color: var(--md-text); }
 		button:active { transform: translateY(1px); }
 		button:disabled { opacity: .55; cursor: not-allowed; }
-		#logs { height: calc(100% - 8px); overflow: auto; background: #0a0f15; color: #cde1ff; padding: 10px; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; border: 1px solid var(--md-border); line-height: 1.35; }
+		#logs { height: 100%; overflow-y: auto; overflow-x: hidden; background: #0a0f15; color: #cde1ff; padding: 10px; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; border: 1px solid var(--md-border); line-height: 1.35; }
 		.log-line.err { color: #ffb4a9; }
 		.toolbar { display: flex; gap: 8px; align-items: center; }
 		.helper { font-size: 12px; color: var(--md-subtext); }
@@ -43,6 +44,11 @@
 		.banner { padding: 10px; background: #2a3a54; border: 1px solid var(--md-border); border-radius: 8px; margin-bottom: 10px; }
 		.progress { height: 8px; background: #1b2736; border: 1px solid var(--md-border); border-radius: 999px; overflow: hidden; display:none; }
 		.progress > div { height: 100%; background: linear-gradient(90deg, #4f8cff, #87b3ff); width: 0%; transition: width .2s ease; }
+		.logs-wrapper { display: flex; flex-direction: column; height: calc(100% - 35px); position: relative; }
+		.loading-indicator { position: absolute; top: 10px; right: 10px; display: none; align-items: center; gap: 8px; background: rgba(79, 140, 255, 0.15); padding: 6px 12px; border-radius: 6px; font-size: 12px; color: var(--md-primary); z-index: 10; }
+		.loading-indicator.active { display: flex; }
+		.spinner { width: 14px; height: 14px; border: 2px solid rgba(79, 140, 255, 0.3); border-top-color: var(--md-primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+		@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 	</style>
 </head>
 <body>
@@ -95,7 +101,13 @@
 		</div>
 		<div class="card">
 			<h2>Logs</h2>
-			<div id="logs"></div>
+			<div class="logs-wrapper">
+				<div class="loading-indicator" id="loading-indicator">
+					<div class="spinner"></div>
+					<span>Script is running...</span>
+				</div>
+				<div id="logs"></div>
+			</div>
 		</div>
 	</div>
 	<script>
@@ -103,9 +115,9 @@
 		const logsEl = $('logs');
 
 		const DEFAULTS = {
-			baseURL: 'https://fathom.video',
-			loginPath: '/login',
-			dataPagePath: '/home',
+			baseURL: 'https://fathom.video/',
+			loginPath: 'users/sign_in',
+			dataPagePath: 'home',
 			downloadDir: 'downloads',
 			waitTimeoutMs: 15000,
 			navTimeoutMs: 30000,
@@ -196,6 +208,12 @@
 			});
 			const cancel = $('btn-cancel');
 			if (cancel) cancel.disabled = !isRunning;
+			
+			// Show/hide loading indicator
+			const loadingIndicator = $('loading-indicator');
+			if (loadingIndicator) {
+				loadingIndicator.classList.toggle('active', isRunning);
+			}
 		}
 
 		['authProvider','username','password','maxMeetings'].forEach(id => {
@@ -258,7 +276,7 @@
 			if (!browsersInstalled) { appendLog('Please install browsers first.', true); return; }
 			currentSettings = settings;
 			setRunning(true);
-			appendLog('Starting extraction (headless, secure mode)...');
+			appendLog('Starting extraction (browser will run in background)...');
 			try {
 				await window.api.saveSettings({ authProvider: settings.authProvider, username: settings.username, maxMeetings: settings.maxMeetings });
 				if (settings.username && settings.password) {

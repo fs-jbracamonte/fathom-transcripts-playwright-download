@@ -10,14 +10,17 @@ test.describe('auth setup', () => {
 		// Setup flows can be slow; extend the overall test timeout
 		test.setTimeout(900_000);
 		
-		// Minimize window if requested (alternative to headless for demos)
+		// Minimize window if requested (only in headed mode)
 		if (env.minimized && !env.headless) {
-			await page.evaluate(() => {
-				window.moveTo(0, 0);
-				window.resizeTo(1, 1);
-			}).catch(() => {
+			try {
+				// Move window off-screen instead of making it tiny
+				await page.evaluate(() => {
+					window.moveTo(-2000, -2000);
+				});
+			} catch {
 				// Some browsers may block window manipulation
-			});
+				// This is fine, the window will just stay visible
+			}
 		}
 		
 		// Configure timeouts
@@ -25,32 +28,15 @@ test.describe('auth setup', () => {
 		await page.setDefaultNavigationTimeout(env.navTimeoutMs);
 		await page.setDefaultTimeout(env.detectTimeoutMs);
 
-		// Light stealth: mask common automation fingerprints before any scripts run
-		await page.addInitScript(() => {
-			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-			// @ts-ignore
-			Object.defineProperty(navigator, 'webdriver', { get: () => false });
-			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-			// @ts-ignore
-			window.chrome = { runtime: {} };
-			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-			// @ts-ignore
-			Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-			// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-			// @ts-ignore
-			Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-			const originalQuery = window.navigator.permissions?.query;
-			if (originalQuery) {
-				// Normalize notifications permission query to avoid headless-only value
+		// Minimal stealth approach - only mask the most obvious automation indicator
+		// The new headless mode should handle most detection issues
+		if (env.headless) {
+			await page.addInitScript(() => {
 				// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 				// @ts-ignore
-				window.navigator.permissions.query = (parameters: any) => (
-					parameters && parameters.name === 'notifications'
-						? Promise.resolve({ state: Notification.permission })
-						: originalQuery(parameters)
-				);
-			}
-		});
+				Object.defineProperty(navigator, 'webdriver', { get: () => false });
+			});
+		}
 
 		// Navigate to login page
 		console.log(`[Auth] Navigating to login page...`);
@@ -543,7 +529,15 @@ test.describe('auth setup', () => {
 
 			
 			// Wait for initial meetings to load
-			await page.waitForTimeout(2000);
+			console.info('[auth] Waiting for initial meetings to load...');
+			try {
+				// Wait for at least one meeting link to appear
+				await page.waitForSelector('a[href*="fathom.video/calls/"]', { timeout: 10000 });
+				console.info('[auth] Initial meetings detected, waiting for page to stabilize...');
+				await page.waitForTimeout(3000); // Give time for more meetings to load
+			} catch (e) {
+				console.warn('[auth] No meetings found initially, will try scrolling anyway...');
+			}
 			
 
 			
@@ -585,21 +579,32 @@ test.describe('auth setup', () => {
 			const scrollToLoadAll = async () => {
 				let previousHeight = 0;
 				let currentHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+				let previousMeetingCount = 0;
+				let currentMeetingCount = await page.evaluate(() => document.querySelectorAll('a[href*="fathom.video/calls/"]').length);
 				let scrollAttempts = 0;
 				const maxScrollAttempts = 60; // increased
 				let noNewContentCount = 0;
 				const maxNoNewContent = 5; // a bit more patience
-				console.info(`[auth] Initial page height: ${currentHeight}px`);
+				
+				console.info('');
+				console.info('[auth] Starting scroll to load all meetings...');
+				console.info(`[auth] Initial state: ${currentMeetingCount} meetings visible, page height: ${currentHeight}px`);
+				
 				await page.evaluate(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); });
 				await page.waitForTimeout(1000);
 				while (scrollAttempts < maxScrollAttempts && noNewContentCount < maxNoNewContent) {
 					scrollAttempts++;
 					previousHeight = currentHeight;
-					await page.evaluate((attempt) => {
+					previousMeetingCount = currentMeetingCount;
+					
+					await page.evaluate(({ attempt, meetingCount }: { attempt: number, meetingCount: number }) => {
 						const indicator = document.getElementById('scroll-indicator');
-						if (indicator) (indicator as HTMLElement).innerHTML = `📜 Scrolling... (Pass ${attempt})`;
-					}, scrollAttempts);
-					console.info(`[auth] Scroll attempt ${scrollAttempts}: Starting from height ${currentHeight}px`);
+						if (indicator) (indicator as HTMLElement).innerHTML = `📜 Scrolling... (Pass ${attempt}) - ${meetingCount} meetings found`;
+					}, { attempt: scrollAttempts, meetingCount: currentMeetingCount });
+					
+					console.info(`[auth] Scroll attempt ${scrollAttempts}: ${currentMeetingCount} meetings, height ${currentHeight}px`);
+					
+					// Perform multiple scroll actions to trigger lazy loading
 					await page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight); });
 					await page.waitForTimeout(700);
 					await page.evaluate(() => { const els = document.querySelectorAll('*'); if (els.length > 0) (els[els.length-1] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'end' }); });
@@ -611,11 +616,36 @@ test.describe('auth setup', () => {
 					await page.waitForTimeout(500);
 					await page.mouse.wheel(0, 1200);
 					await page.waitForTimeout(2000);
+					
+					// Check for loading indicators
 					const loadingIndicator = page.locator('[class*="loading"], [class*="spinner"], [class*="loader"], [data-testid*="loading"]').first();
-					if (await loadingIndicator.isVisible().catch(() => false)) { console.info('[auth] Waiting for loading indicator to disappear...'); await loadingIndicator.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { console.info('[auth] Loader still visible, continuing...'); }); }
+					if (await loadingIndicator.isVisible().catch(() => false)) { 
+						console.info('[auth] Waiting for loading indicator to disappear...'); 
+						await loadingIndicator.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => { 
+							console.info('[auth] Loader still visible, continuing...'); 
+						}); 
+					}
+					
+					// Update counts
 					currentHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-					if (currentHeight > previousHeight) { console.info(`[auth] ✅ Loaded +${currentHeight - previousHeight}px`); noNewContentCount = 0; }
-					else { noNewContentCount++; console.info(`[auth] No new content (streak ${noNewContentCount}/${maxNoNewContent})`); }
+					currentMeetingCount = await page.evaluate(() => document.querySelectorAll('a[href*="fathom.video/calls/"]').length);
+					
+					// Check if we loaded new content (meetings or height)
+					const newMeetingsFound = currentMeetingCount > previousMeetingCount;
+					const newHeightAdded = currentHeight > previousHeight;
+					
+					if (newMeetingsFound || newHeightAdded) { 
+						if (newMeetingsFound) {
+							console.info(`[auth] ✅ Found ${currentMeetingCount - previousMeetingCount} new meetings (total: ${currentMeetingCount})`);
+						}
+						if (newHeightAdded) {
+							console.info(`[auth] ✅ Page grew by ${currentHeight - previousHeight}px`);
+						}
+						noNewContentCount = 0; 
+					} else { 
+						noNewContentCount++; 
+						console.info(`[auth] No new content (streak ${noNewContentCount}/${maxNoNewContent}) - Still at ${currentMeetingCount} meetings`); 
+					}
 				}
 				if (noNewContentCount >= maxNoNewContent) console.info(`[auth] Stopped: No new content after ${maxNoNewContent} attempts`);
 				else if (scrollAttempts >= maxScrollAttempts) console.info(`[auth] Stopped: Reached maximum attempts (${maxScrollAttempts})`);
@@ -629,13 +659,19 @@ test.describe('auth setup', () => {
 					links.forEach(link => { const href = (link as HTMLAnchorElement).href; if (href && href.includes('fathom.video/calls/')) uniqueLinks.add(href); });
 					return Array.from(uniqueLinks);
 				});
+				// Update final count on indicator
 				await page.evaluate((count) => {
 					const indicator = document.getElementById('scroll-indicator');
 					if (indicator) {
-						if (count > 0) { indicator.innerHTML = `✅ Found ${count} meeting(s)!`; (indicator as HTMLElement).style.background = '#4CAF50'; }
-						else { indicator.innerHTML = `✅ Scrolling complete!`; (indicator as HTMLElement).style.background = '#2196F3'; }
+						if (count > 0) { 
+							indicator.innerHTML = `✅ Found ${count} meeting(s)!`; 
+							(indicator as HTMLElement).style.background = '#4CAF50'; 
+						} else { 
+							indicator.innerHTML = `✅ Scrolling complete!`; 
+							(indicator as HTMLElement).style.background = '#2196F3'; 
+						}
 					}
-				}, (await page.evaluate(() => document.querySelectorAll('a[href*="fathom.video/calls/"]').length)) as any);
+				}, meetingLinks.length);
 				await page.waitForTimeout(2000);
 				await page.evaluate(() => { const indicator = document.getElementById('scroll-indicator'); if (indicator) { (indicator as HTMLElement).style.transition = 'opacity 1s ease-out'; (indicator as HTMLElement).style.opacity = '0'; setTimeout(() => indicator.remove(), 1000); } });
 				return meetingLinks;
@@ -655,15 +691,22 @@ test.describe('auth setup', () => {
 				});
 			}
 			
+			// Log total meetings found
+			console.info('');
+			console.info('================================================');
+			console.info(`📊 MEETING DISCOVERY COMPLETE`);
+			console.info(`Found ${allMeetingLinks.length} total meetings on the page`);
+			console.info('================================================');
+			console.info('');
+			
 			// Visit each meeting page if configured to do so
 			const maxMeetingsToVisit = Number(process.env.MAX_MEETINGS_TO_VISIT || '0');
 			const shouldVisitMeetings = maxMeetingsToVisit > 0 && allMeetingLinks.length > 0;
 			
 			if (shouldVisitMeetings) {
 				const meetingsToVisit = allMeetingLinks.slice(0, maxMeetingsToVisit);
-				console.info('');
 				console.info('================================================');
-				console.info(`📊 VISITING ${meetingsToVisit.length} MEETING PAGE(S)`);
+				console.info(`📊 VISITING ${meetingsToVisit.length} OUT OF ${allMeetingLinks.length} MEETINGS`);
 				console.info('================================================');
 				console.info('');
 				
