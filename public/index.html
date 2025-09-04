@@ -1,0 +1,306 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Fathom Transcript Extractor</title>
+	<style>
+		:root {
+			--md-bg: #0b0f14;
+			--md-surface: #121a22;
+			--md-surface-2: #18222c;
+			--md-primary: #4f8cff;
+			--md-on-primary: #ffffff;
+			--md-text: #d6e0ea;
+			--md-subtext: #92a3b5;
+			--md-border: #263240;
+			--radius: 10px;
+			--error: #ff6b6b;
+		}
+		* { box-sizing: border-box; }
+		body { background: var(--md-bg); color: var(--md-text); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; }
+		header { padding: 16px 22px; border-bottom: 1px solid var(--md-border); background: linear-gradient(180deg, #0e1420, #0b0f14 60%); display: flex; align-items: center; justify-content: space-between; }
+		h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+		.container { display: grid; grid-template-columns: 420px 1fr; gap: 16px; padding: 16px; height: calc(100vh - 58px); }
+		.card { background: var(--md-surface); border: 1px solid var(--md-border); border-radius: var(--radius); padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
+		.card h2 { font-size: 13px; color: var(--md-subtext); font-weight: 600; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .6px; }
+		.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+		.field { margin-bottom: 10px; }
+		label { display: block; margin-bottom: 6px; font-size: 12px; color: var(--md-subtext); }
+		input[type="text"], input[type="password"], input[type="number"], select { width: 100%; background: var(--md-surface-2); color: var(--md-text); border: 1px solid var(--md-border); border-radius: 8px; padding: 8px 10px; outline: none; transition: border-color .15s ease; }
+		input:focus, select:focus { border-color: var(--md-primary); box-shadow: 0 0 0 2px rgba(79,140,255,0.15); }
+		.actions { display: flex; gap: 10px; }
+		button { background: var(--md-primary); color: var(--md-on-primary); border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; transition: transform .04s ease, background .2s ease; }
+		button.secondary { background: #233045; color: var(--md-text); }
+		button:active { transform: translateY(1px); }
+		button:disabled { opacity: .55; cursor: not-allowed; }
+		#logs { height: calc(100% - 8px); overflow: auto; background: #0a0f15; color: #cde1ff; padding: 10px; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; border: 1px solid var(--md-border); line-height: 1.35; }
+		.log-line.err { color: #ffb4a9; }
+		.toolbar { display: flex; gap: 8px; align-items: center; }
+		.helper { font-size: 12px; color: var(--md-subtext); }
+		.error { color: #ff6b6b; font-size: 12px; margin-top: 4px; }
+		.banner { padding: 10px; background: #2a3a54; border: 1px solid var(--md-border); border-radius: 8px; margin-bottom: 10px; }
+		.progress { height: 8px; background: #1b2736; border: 1px solid var(--md-border); border-radius: 999px; overflow: hidden; display:none; }
+		.progress > div { height: 100%; background: linear-gradient(90deg, #4f8cff, #87b3ff); width: 0%; transition: width .2s ease; }
+	</style>
+</head>
+<body>
+	<header>
+		<h1>Fathom Transcript Extractor</h1>
+		<div class="toolbar">
+			<button class="secondary" id="btn-install">Install Browsers</button>
+			<button class="secondary" id="btn-open-transcripts">Transcripts</button>
+			<button class="secondary" id="btn-open-report">Report</button>
+		</div>
+	</header>
+	<div class="container">
+		<div class="card">
+			<h2>Authentication</h2>
+			<div id="install-banner" class="banner" style="display:none">Chromium is not installed for Playwright. Click "Install Browsers" to set it up.</div>
+			<div class="progress" id="install-progress"><div></div></div>
+			<div class="row">
+				<div class="field">
+					<label>Auth Provider</label>
+					<select id="authProvider">
+						<option value="auto">Auto</option>
+						<option value="google">Google</option>
+						<option value="microsoft">Microsoft</option>
+						<option value="password">Password</option>
+					</select>
+				</div>
+				<div class="field">
+					<label>Username</label>
+					<input type="text" id="username" placeholder="you@example.com" autocomplete="username">
+					<div id="err-username" class="error" style="display:none"></div>
+				</div>
+			</div>
+			<div class="field">
+				<label>Password</label>
+				<input type="password" id="password" placeholder="********" autocomplete="current-password">
+				<div id="err-password" class="error" style="display:none"></div>
+			</div>
+			<div class="row">
+				<div class="field">
+					<label>Max Meetings to Visit (0 disables)</label>
+					<input type="number" id="maxMeetings" min="0" value="0">
+					<div id="err-meetings" class="error" style="display:none"></div>
+				</div>
+			</div>
+			<div class="helper">Runs headless and masks sensitive info in logs. Advanced options use safe defaults.</div>
+			<div class="actions" style="margin-top:10px;">
+				<button id="btn-start">Start Extraction</button>
+				<button class="secondary" id="btn-cancel">Cancel</button>
+			</div>
+		</div>
+		<div class="card">
+			<h2>Logs</h2>
+			<div id="logs"></div>
+		</div>
+	</div>
+	<script>
+		const $ = (id) => document.getElementById(id);
+		const logsEl = $('logs');
+
+		const DEFAULTS = {
+			baseURL: 'https://fathom.video',
+			loginPath: '/login',
+			dataPagePath: '/home',
+			downloadDir: 'downloads',
+			waitTimeoutMs: 15000,
+			navTimeoutMs: 30000,
+			headless: true,
+			secureMode: true,
+			minimized: false,
+			skipScroll: false,
+		};
+
+		let currentSettings = null;
+		let browsersInstalled = false;
+
+		function appendLog(line, isErr = false) {
+			if (currentSettings && DEFAULTS.secureMode) {
+				const u = currentSettings.username;
+				const p = currentSettings.password;
+				if (u) {
+					const maskedU = u.replace(/^(..).*(@.*)$/,'$1****$2');
+					line = line.split(u).join(maskedU);
+				}
+				if (p && typeof line === 'string' && p.length > 0) {
+					line = line.split(p).join('********');
+				}
+			}
+			const div = document.createElement('div');
+			div.className = 'log-line' + (isErr ? ' err' : '');
+			div.textContent = line;
+			logsEl.appendChild(div);
+			logsEl.scrollTop = logsEl.scrollHeight;
+		}
+
+		function isValidEmail(val) {
+			return /.+@.+\..+/.test(val);
+		}
+
+		function readSettings() {
+			return {
+				baseURL: DEFAULTS.baseURL,
+				loginPath: DEFAULTS.loginPath,
+				dataPagePath: DEFAULTS.dataPagePath,
+				authProvider: $('authProvider').value,
+				username: $('username').value.trim(),
+				password: $('password').value,
+				headless: DEFAULTS.headless,
+				secureMode: DEFAULTS.secureMode,
+				minimized: DEFAULTS.minimized,
+				skipScroll: DEFAULTS.skipScroll,
+				maxMeetings: Number($('maxMeetings').value || 0),
+				waitTimeoutMs: DEFAULTS.waitTimeoutMs,
+				navTimeoutMs: DEFAULTS.navTimeoutMs,
+				downloadDir: DEFAULTS.downloadDir,
+			};
+		}
+
+		function setFieldError(id, msg) {
+			const el = $(id);
+			if (!el) return;
+			el.textContent = msg || '';
+			el.style.display = msg ? 'block' : 'none';
+		}
+
+		function validate(settings) {
+			let ok = true;
+			setFieldError('err-username','');
+			setFieldError('err-password','');
+			setFieldError('err-meetings','');
+
+			if (!settings.username) { setFieldError('err-username','Username is required'); ok = false; }
+			else if (!isValidEmail(settings.username)) { setFieldError('err-username','Enter a valid email'); ok = false; }
+
+			if (!settings.password) { setFieldError('err-password','Password is required'); ok = false; }
+
+			if (!Number.isInteger(settings.maxMeetings) || settings.maxMeetings < 0) { setFieldError('err-meetings','Enter a number >= 0'); ok = false; }
+
+			return ok;
+		}
+
+		function updateStartEnabled() {
+			const s = readSettings();
+			const ok = validate(s) && browsersInstalled;
+			$('btn-start').disabled = !ok;
+		}
+
+		function setRunning(isRunning) {
+			['authProvider','username','password','maxMeetings','btn-start','btn-install'].forEach(id => {
+				const el = $(id);
+				if (el) el.disabled = isRunning || (id === 'btn-start' && !browsersInstalled);
+			});
+			const cancel = $('btn-cancel');
+			if (cancel) cancel.disabled = !isRunning;
+		}
+
+		['authProvider','username','password','maxMeetings'].forEach(id => {
+			const el = $(id);
+			el.addEventListener('input', () => updateStartEnabled());
+			el.addEventListener('change', () => updateStartEnabled());
+		});
+
+		async function loadPersisted() {
+			try {
+				const res = await window.api.loadSettings();
+				const s = res?.settings || {};
+				if (s.authProvider) $('authProvider').value = s.authProvider;
+				if (s.username) $('username').value = s.username;
+				if (Number.isInteger(s.maxMeetings)) $('maxMeetings').value = String(s.maxMeetings);
+				if (s.username) {
+					const sec = await window.api.getSecret({ account: s.username });
+					if (sec?.ok && sec.password) $('password').value = sec.password;
+				}
+				updateStartEnabled();
+			} catch (e) {
+				appendLog('Failed to load settings', true);
+			}
+		}
+
+		async function checkBrowsers() {
+			try {
+				const res = await window.api.checkBrowsers();
+				browsersInstalled = !!res?.installed;
+				$('install-banner').style.display = browsersInstalled ? 'none' : 'block';
+				updateStartEnabled();
+			} catch {}
+		}
+
+		function showInstallProgress(show) {
+			$('install-progress').style.display = show ? 'block' : 'none';
+		}
+
+		function tickProgress(line) {
+			const bar = $('install-progress').firstElementChild;
+			// Heuristic: bump progress on certain lines
+			let w = parseFloat(bar.style.width || '0');
+			if (/chromium/i.test(line)) w = Math.min(10, w + 3);
+			if (/downloading/i.test(line)) w = Math.min(80, w + 10);
+			if (/extracting|installing/i.test(line)) w = Math.min(95, w + 5);
+			if (/success|installed|finished/i.test(line)) w = 100;
+			if (w < 5) w = 5; // ensure visible
+			bar.style.width = w + '%';
+		}
+
+		// Init
+		loadPersisted();
+		checkBrowsers();
+		updateStartEnabled();
+
+		$('btn-start').addEventListener('click', async () => {
+			logsEl.innerHTML = '';
+			const settings = readSettings();
+			if (!validate(settings)) { appendLog('Please fix errors above.', true); return; }
+			if (!browsersInstalled) { appendLog('Please install browsers first.', true); return; }
+			currentSettings = settings;
+			setRunning(true);
+			appendLog('Starting extraction (headless, secure mode)...');
+			try {
+				await window.api.saveSettings({ authProvider: settings.authProvider, username: settings.username, maxMeetings: settings.maxMeetings });
+				if (settings.username && settings.password) {
+					await window.api.setSecret({ account: settings.username, password: settings.password });
+				}
+				await window.api.start(settings);
+			} catch (e) {
+				appendLog('Failed to start: ' + (e?.message || e), true);
+				currentSettings = null;
+				setRunning(false);
+			}
+		});
+
+		$('btn-cancel').addEventListener('click', async () => {
+			appendLog('Cancelling...');
+			await window.api.cancel();
+		});
+
+		$('btn-install').addEventListener('click', async () => {
+			appendLog('Installing browsers (chromium)...');
+			showInstallProgress(true);
+			$('install-progress').firstElementChild.style.width = '5%';
+			await window.api.installBrowsers();
+		});
+
+		$('btn-open-transcripts').addEventListener('click', () => window.api.openTranscripts());
+		$('btn-open-report').addEventListener('click', () => window.api.openReport());
+
+		window.api.onRunLog((line) => appendLog(line));
+		window.api.onRunEnd(({ code }) => {
+			appendLog('Process finished with code ' + code + (code === 0 ? ' (success)' : ' (failure)'), code !== 0);
+			currentSettings = null;
+			setRunning(false);
+		});
+
+		window.api.onInstallLog((line) => { appendLog('[install] ' + line); tickProgress(line); });
+		window.api.onInstallEnd(async ({ code }) => {
+			appendLog('[install] finished with code ' + code + (code === 0 ? '' : ' (error)'), code !== 0);
+			$('install-progress').firstElementChild.style.width = code === 0 ? '100%' : '0%';
+			setTimeout(() => showInstallProgress(false), 800);
+			await checkBrowsers();
+		});
+	</script>
+</body>
+</html>

@@ -803,6 +803,7 @@ test.describe('auth setup', () => {
 									throw pageError; // Re-throw non-timeout errors
 								}
 							}
+
 						}
 						
 						if (!pageLoaded) {

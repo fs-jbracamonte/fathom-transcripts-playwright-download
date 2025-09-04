@@ -49,9 +49,9 @@ export default defineConfig({
 				viewport: { width: 1920, height: 1080 },
 				userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 				launchOptions: {
+					ignoreDefaultArgs: ['--enable-automation'],
 					args: [
 						'--disable-blink-features=AutomationControlled',
-						'--disable-features=site-per-process',
 						'--disable-web-security',
 						'--disable-features=IsolateOrigins,site-per-process',
 						'--flag-switches-begin',
@@ -64,7 +64,6 @@ export default defineConfig({
 						'--disable-accelerated-2d-canvas',
 						'--no-first-run',
 						'--no-zygote',
-						'--single-process',
 						'--disable-gpu',
 						'--window-size=1920,1080',
 						'--start-maximized',
@@ -72,6 +71,27 @@ export default defineConfig({
 					],
 					// Use headless mode if requested
 					headless: process.env.HEADLESS === 'true' || process.env.SECURE_MODE === 'true',
+				}
+			},
+		},
+		{
+			name: 'setup-headed',
+			testMatch: /auth\.setup\.headed\.spec\.ts/,
+			use: {
+				baseURL,
+				channel: 'chrome',
+				viewport: { width: 1920, height: 1080 },
+				userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				launchOptions: {
+					args: [
+						'--window-size=1920,1080',
+						'--start-maximized',
+						'--disable-blink-features=AutomationControlled',
+						'--disable-features=IsolateOrigins,site-per-process',
+						'--disable-site-isolation-trials',
+					],
+					ignoreDefaultArgs: ['--enable-automation'],
+					headless: false,
 				}
 			},
 		},
