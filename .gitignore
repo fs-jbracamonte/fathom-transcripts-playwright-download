@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Build output
+dist/
+build/
+!build/README_*.txt
+
 # Test results
 test-results/
 playwright-report/
@@ -38,3 +43,6 @@ yarn-error.log*
 # Screenshots
 *.png
 !test-results/**/*.png
+
+# Development test scripts
+scripts/test-*.js

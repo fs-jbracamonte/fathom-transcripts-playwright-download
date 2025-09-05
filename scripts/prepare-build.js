@@ -53,5 +53,55 @@ if (!browsersFound) {
   console.log('✅ Browsers already installed, skipping download.');
 }
 
+console.log('\n📦 Copying browsers to build directory...');
+
+// Create build/playwright-browsers directory
+const buildBrowsersPath = path.join(__dirname, '..', 'build', 'playwright-browsers');
+if (!fs.existsSync(buildBrowsersPath)) {
+  fs.mkdirSync(buildBrowsersPath, { recursive: true });
+}
+
+// Copy browsers from ms-playwright to build directory
+if (fs.existsSync(msPlaywrightPath)) {
+  const entries = fs.readdirSync(msPlaywrightPath);
+  for (const entry of entries) {
+    const sourcePath = path.join(msPlaywrightPath, entry);
+    const targetPath = path.join(buildBrowsersPath, entry);
+    
+    if (fs.statSync(sourcePath).isDirectory()) {
+      console.log(`📋 Copying ${entry}...`);
+      
+      // Use xcopy on Windows for faster copying
+      if (process.platform === 'win32') {
+        try {
+          execSync(`xcopy "${sourcePath}" "${targetPath}" /E /I /H /Y`, { stdio: 'ignore' });
+        } catch (e) {
+          // Fallback to Node.js copy
+          fs.cpSync(sourcePath, targetPath, { recursive: true, force: true });
+        }
+      } else {
+        fs.cpSync(sourcePath, targetPath, { recursive: true, force: true });
+      }
+    }
+  }
+  console.log('✅ Browsers copied to build directory');
+} else {
+  console.warn('⚠️  No browsers found to copy. The app may need to download them on first run.');
+}
+
 console.log('\n📦 Ready to build with pre-bundled browsers!');
+
+// Also download Node.js for bundling
+console.log('\n📥 Downloading Node.js for bundling...');
+try {
+  require('child_process').execSync('node scripts/download-node.js', { 
+    stdio: 'inherit',
+    cwd: path.join(__dirname, '..')
+  });
+} catch (error) {
+  console.error('Failed to download Node.js:', error.message);
+  process.exit(1);
+}
+
+console.log('\n✅ Build preparation complete!');
 console.log('Run "npm run dist" to build the application.\n');

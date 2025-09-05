@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, fork } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 let keytar = null;
@@ -25,7 +25,10 @@ function createWindow() {
 	});
 
 	mainWindow.removeMenu();
-	mainWindow.loadFile(path.join(__dirname, '..', 'public', 'index.html'));
+	const htmlPath = app.isPackaged 
+		? path.join(process.resourcesPath, 'app', 'public', 'index.html')
+		: path.join(__dirname, '..', 'public', 'index.html');
+	mainWindow.loadFile(htmlPath);
 }
 
 app.whenReady().then(() => {
@@ -169,10 +172,13 @@ function isChromiumInstalled(cwd) {
 }
 
 function playwrightBin(cwd) {
+	// In packaged app, playwright binary is in the app resources
+	const basePath = app.isPackaged ? process.resourcesPath + '/app' : cwd;
+	
 	if (process.platform === 'win32') {
-		return path.join(cwd, 'node_modules', '.bin', 'playwright.cmd');
+		return path.join(basePath, 'node_modules', '.bin', 'playwright.cmd');
 	}
-	return path.join(cwd, 'node_modules', '.bin', 'playwright');
+	return path.join(basePath, 'node_modules', '.bin', 'playwright');
 }
 
 ipcMain.handle('settings:load', async () => {
@@ -218,7 +224,7 @@ ipcMain.handle('keytar:delete', async (_e, { account }) => {
 });
 
 ipcMain.handle('tools:checkBrowsers', async () => {
-	const cwd = path.join(__dirname, '..');
+	const cwd = app.isPackaged ? path.join(process.resourcesPath, 'app') : path.join(__dirname, '..');
 	return { installed: isChromiumInstalled(cwd) };
 });
 
@@ -230,7 +236,7 @@ ipcMain.handle('run:start', async (event, settings) => {
 		currentChild = null;
 	}
 
-	const cwd = path.join(__dirname, '..');
+	const cwd = app.isPackaged ? path.join(process.resourcesPath, 'app') : path.join(__dirname, '..');
 	const bin = playwrightBin(cwd);
 
 	let resolvedPassword = settings.password || '';
@@ -261,16 +267,78 @@ ipcMain.handle('run:start', async (event, settings) => {
 		TRANSCRIPT_PATH: settings.transcriptPath || '',
 	};
 	
-	// Use bundled browsers in production
+	// Use bundled browsers in production or test mode
 	if (app.isPackaged) {
 		env.PLAYWRIGHT_BROWSERS_PATH = path.join(process.resourcesPath, 'playwright-browsers');
+	} else if (process.env.TEST_PACKAGED === 'true') {
+		// In test mode, use build/playwright-browsers
+		const testBrowsersPath = path.join(__dirname, '..', 'build', 'playwright-browsers');
+		if (fs.existsSync(testBrowsersPath)) {
+			env.PLAYWRIGHT_BROWSERS_PATH = testBrowsersPath;
+			console.log('Using test browsers from:', testBrowsersPath);
+		}
 	}
 
-	const child = spawn(bin, ['test', 'auth.setup', '--project=setup'], {
-		cwd,
-		env,
-		shell: process.platform === 'win32',
-	});
+	// Run playwright using bundled or system node
+	let child;
+	// Allow testing packaged mode via environment variable
+	const isPackagedMode = app.isPackaged || process.env.TEST_PACKAGED === 'true';
+	
+	if (isPackagedMode) {
+		// In packaged app, use bundled Node.js with direct CLI path
+		const nodeExe = process.platform === 'win32' ? 'node.exe' : 'node';
+		// In test mode, use build/node directory
+		const bundledNodePath = process.env.TEST_PACKAGED === 'true' 
+			? path.join(__dirname, '..', 'build', 'node', nodeExe)
+			: path.join(process.resourcesPath, 'node', nodeExe);
+		
+		// Try multiple possible locations for Playwright CLI
+		const possibleCliPaths = [
+			path.join(cwd, 'node_modules', 'playwright', 'cli.js'),  // Most likely in packaged app
+			path.join(cwd, 'node_modules', '@playwright', 'test', 'cli.js'),  // Preferred in dev
+			path.join(cwd, 'node_modules', 'playwright-core', 'lib', 'cli', 'cli.js')
+		];
+		
+		let playwrightCliPath = null;
+		for (const cliPath of possibleCliPaths) {
+			if (fs.existsSync(cliPath)) {
+				playwrightCliPath = cliPath;
+				console.log('Found Playwright CLI at:', cliPath);
+				break;
+			}
+		}
+		
+		if (!playwrightCliPath) {
+			console.error('Could not find Playwright CLI in any of these locations:');
+			possibleCliPaths.forEach(p => console.error(' -', p));
+			console.error('\nNote: This usually means Playwright is not included in the build.');
+			console.error('The app will now try to use the system Playwright instead...');
+			
+			// Fallback to system playwright command
+			return { started: false, error: 'Playwright CLI not found in packaged app' };
+		}
+		
+		// Log for debugging
+		console.log('Bundled Node Path:', bundledNodePath);
+		console.log('Playwright CLI Path:', playwrightCliPath);
+		console.log('Working Directory:', cwd);
+		
+		child = spawn(bundledNodePath, [playwrightCliPath, 'test', 'auth.setup', '--project=setup'], {
+			cwd,
+			env,
+			shell: false,
+			windowsHide: true,
+		});
+	} else {
+		// In dev, use the playwright binary directly
+		const bin = playwrightBin(cwd);
+		const quotedBin = process.platform === 'win32' ? `"${bin}"` : bin;
+		child = spawn(quotedBin, ['test', 'auth.setup', '--project=setup'], {
+			cwd,
+			env,
+			shell: process.platform === 'win32',
+		});
+	}
 
 	currentChild = child;
 
@@ -305,9 +373,58 @@ ipcMain.handle('tools:installBrowsers', async () => {
 		return { started: true };
 	}
 	
-	const cwd = path.join(__dirname, '..');
-	const bin = playwrightBin(cwd);
-	const child = spawn(bin, ['install', 'chromium'], { cwd, env: process.env, shell: process.platform === 'win32' });
+	const cwd = app.isPackaged ? path.join(process.resourcesPath, 'app') : path.join(__dirname, '..');
+	
+	// Run playwright install using bundled or system node
+	let child;
+	// Allow testing packaged mode via environment variable
+	const isPackagedMode = app.isPackaged || process.env.TEST_PACKAGED === 'true';
+	
+	if (isPackagedMode) {
+		// In packaged app, use bundled Node.js with direct CLI path
+		const nodeExe = process.platform === 'win32' ? 'node.exe' : 'node';
+		// In test mode, use build/node directory
+		const bundledNodePath = process.env.TEST_PACKAGED === 'true' 
+			? path.join(__dirname, '..', 'build', 'node', nodeExe)
+			: path.join(process.resourcesPath, 'node', nodeExe);
+		
+		// Try multiple possible locations for Playwright CLI
+		const possibleCliPaths = [
+			path.join(cwd, 'node_modules', 'playwright', 'cli.js'),  // Most likely in packaged app
+			path.join(cwd, 'node_modules', '@playwright', 'test', 'cli.js'),  // Preferred in dev
+			path.join(cwd, 'node_modules', 'playwright-core', 'lib', 'cli', 'cli.js')
+		];
+		
+		let playwrightCliPath = null;
+		for (const cliPath of possibleCliPaths) {
+			if (fs.existsSync(cliPath)) {
+				playwrightCliPath = cliPath;
+				console.log('Found Playwright CLI for browser install at:', cliPath);
+				break;
+			}
+		}
+		
+		if (!playwrightCliPath) {
+			console.error('Could not find Playwright CLI for browser installation');
+			throw new Error('Playwright CLI not found');
+		}
+		
+		child = spawn(bundledNodePath, [playwrightCliPath, 'install', 'chromium'], {
+			cwd,
+			env: process.env,
+			shell: false,
+			windowsHide: true,
+		});
+	} else {
+		// In dev, use the playwright binary
+		const bin = playwrightBin(cwd);
+		const quotedBin = process.platform === 'win32' ? `"${bin}"` : bin;
+		child = spawn(quotedBin, ['install', 'chromium'], { 
+			cwd, 
+			env: process.env, 
+			shell: process.platform === 'win32' 
+		});
+	}
 
 	streamChild(
 		child,
@@ -329,13 +446,15 @@ ipcMain.handle('fs:openTranscripts', async () => {
 	} catch {}
 	
 	// Fall back to default transcripts folder
-	const transcripts = path.join(path.join(__dirname, '..'), 'transcripts');
+	const appPath = app.isPackaged ? process.resourcesPath + '/app' : path.join(__dirname, '..');
+	const transcripts = path.join(appPath, 'transcripts');
 	await shell.openPath(transcripts);
 	return { opened: true };
 });
 
 ipcMain.handle('fs:openReport', async () => {
-	const report = path.join(path.join(__dirname, '..'), 'playwright-report', 'index.html');
+	const appPath = app.isPackaged ? process.resourcesPath + '/app' : path.join(__dirname, '..');
+	const report = path.join(appPath, 'playwright-report', 'index.html');
 	await shell.openPath(report);
 	return { opened: true };
 });
