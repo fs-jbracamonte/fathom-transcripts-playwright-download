@@ -110,11 +110,10 @@ MAX_MEETINGS_TO_VISIT=5 npx playwright test auth.setup --project=setup
 ```bash
 npm run electron
 ```
-2. If prompted, click "Install Browsers" (first run only).
-3. Fill in Auth Provider, Username, Password.
-4. Optional: set "Max Meetings to Visit" or click "Browse" to choose a Transcript folder.
-5. Click "Start Extraction". The browser runs minimized and logs stream into the app.
-6. Use "Transcripts" and "Report" to open output locations.
+2. Fill in Auth Provider, Username, Password.
+3. Optional: set "Max Meetings to Visit" or click "Browse" to choose a Transcript folder.
+4. Click "Start Extraction". The browser runs minimized and logs stream into the app.
+5. Use "Transcripts" and "Report" to open output locations.
 
 ## 📁 Where to Find Your Transcripts
 
@@ -150,9 +149,11 @@ NAV_TIMEOUT_MS=60000
 - Has a 2-minute timeout per meeting transcript
 - Retries failed extractions up to 5 times
 
-### Playwright not installed for the Electron app
-- In the Electron UI, click "Install Browsers".
-- Or run `npm run install:browsers`.
+### Playwright browsers in Electron builds
+Browsers are bundled with the installer build. For local development, you can install Chromium via:
+```bash
+npm run install:browsers
+```
 
 ### Simulate packaged mode in development
 ```bash

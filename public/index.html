@@ -55,7 +55,6 @@
 	<header>
 		<h1>Fathom Transcript Extractor</h1>
 		<div class="toolbar">
-			<button class="secondary" id="btn-install">Install Browsers</button>
 			<button class="secondary" id="btn-open-transcripts">Transcripts</button>
 			<button class="secondary" id="btn-open-report">Report</button>
 		</div>
@@ -63,8 +62,6 @@
 	<div class="container">
 		<div class="card">
 			<h2>Authentication</h2>
-			<div id="install-banner" class="banner" style="display:none">Chromium is not installed for Playwright. Click "Install Browsers" to set it up.</div>
-			<div class="progress" id="install-progress"><div></div></div>
 			<div class="row">
 				<div class="field">
 					<label>Auth Provider</label>
@@ -137,7 +134,7 @@
 		};
 
 		let currentSettings = null;
-		let browsersInstalled = false;
+		let browsersInstalled = true; // Browsers are bundled in packaged build
 
 		function appendLog(line, isErr = false) {
 			if (currentSettings && DEFAULTS.secureMode) {
@@ -210,14 +207,14 @@
 
 		function updateStartEnabled() {
 			const s = readSettings();
-			const ok = validate(s) && browsersInstalled;
+			const ok = validate(s);
 			$('btn-start').disabled = !ok;
 		}
 
 		function setRunning(isRunning) {
-			['authProvider','username','password','maxMeetings','transcriptPath','btn-browse-transcript','btn-start','btn-install'].forEach(id => {
+			['authProvider','username','password','maxMeetings','transcriptPath','btn-browse-transcript','btn-start'].forEach(id => {
 				const el = $(id);
-				if (el) el.disabled = isRunning || (id === 'btn-start' && !browsersInstalled);
+				if (el) el.disabled = isRunning;
 			});
 			const cancel = $('btn-cancel');
 			if (cancel) cancel.disabled = !isRunning;
@@ -253,41 +250,17 @@
 			}
 		}
 
-		async function checkBrowsers() {
-			try {
-				const res = await window.api.checkBrowsers();
-				browsersInstalled = !!res?.installed;
-				$('install-banner').style.display = browsersInstalled ? 'none' : 'block';
-				updateStartEnabled();
-			} catch {}
-		}
-
-		function showInstallProgress(show) {
-			$('install-progress').style.display = show ? 'block' : 'none';
-		}
-
-		function tickProgress(line) {
-			const bar = $('install-progress').firstElementChild;
-			// Heuristic: bump progress on certain lines
-			let w = parseFloat(bar.style.width || '0');
-			if (/chromium/i.test(line)) w = Math.min(10, w + 3);
-			if (/downloading/i.test(line)) w = Math.min(80, w + 10);
-			if (/extracting|installing/i.test(line)) w = Math.min(95, w + 5);
-			if (/success|installed|finished/i.test(line)) w = 100;
-			if (w < 5) w = 5; // ensure visible
-			bar.style.width = w + '%';
-		}
+		// Browser installation UI removed; browsers are pre-bundled in builds
 
 		// Init
 		loadPersisted();
-		checkBrowsers();
 		updateStartEnabled();
 
 		$('btn-start').addEventListener('click', async () => {
 			logsEl.innerHTML = '';
 			const settings = readSettings();
 			if (!validate(settings)) { appendLog('Please fix errors above.', true); return; }
-			if (!browsersInstalled) { appendLog('Please install browsers first.', true); return; }
+			// Browsers are bundled in packaged build
 			currentSettings = settings;
 			setRunning(true);
 			appendLog('Starting extraction (browser will run in background)...');
@@ -309,12 +282,7 @@
 			await window.api.cancel();
 		});
 
-		$('btn-install').addEventListener('click', async () => {
-			appendLog('Installing browsers (chromium)...');
-			showInstallProgress(true);
-			$('install-progress').firstElementChild.style.width = '5%';
-			await window.api.installBrowsers();
-		});
+		// Removed Install Browsers button and handler
 
 		$('btn-open-transcripts').addEventListener('click', () => window.api.openTranscripts());
 		$('btn-open-report').addEventListener('click', () => window.api.openReport());
@@ -343,13 +311,7 @@
 			setRunning(false);
 		});
 
-		window.api.onInstallLog((line) => { appendLog('[install] ' + line); tickProgress(line); });
-		window.api.onInstallEnd(async ({ code }) => {
-			appendLog('[install] finished with code ' + code + (code === 0 ? '' : ' (error)'), code !== 0);
-			$('install-progress').firstElementChild.style.width = code === 0 ? '100%' : '0%';
-			setTimeout(() => showInstallProgress(false), 800);
-			await checkBrowsers();
-		});
+		// Removed install progress listeners
 	</script>
 </body>
 </html>
