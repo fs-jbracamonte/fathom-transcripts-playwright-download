@@ -14,6 +14,95 @@ const getTranscriptPath = () => {
 	return path.join(__dirname, '..', 'transcripts');
 };
 
+// Parse date from formats like "Sep 5, 2025" to Date object
+function parseMeetingDate(dateStr: string): Date | null {
+	try {
+		if (!dateStr || dateStr === 'Unknown Date') return null;
+		
+		// Handle common date formats
+		// Format: "Sep 5, 2025" or "September 5, 2025"
+		const date = new Date(dateStr);
+		
+		// Check if date is valid
+		if (isNaN(date.getTime())) {
+			console.warn(`[auth] Could not parse date: ${dateStr}`);
+			return null;
+		}
+		
+		// Debug logging for date parsing
+		if (process.env.MEETING_DATE_START || process.env.MEETING_DATE_END) {
+			console.info(`[auth] Parsed meeting date "${dateStr}" as: ${date.toISOString().split('T')[0]}`);
+		}
+		
+		return date;
+	} catch (error) {
+		console.warn(`[auth] Error parsing date "${dateStr}":`, error);
+		return null;
+	}
+}
+
+// Check if a date is within the specified range
+function isDateInRange(date: Date | null, startDate: string, endDate: string): boolean {
+	if (!date) return true; // If no date parsed, include the meeting
+	
+	if (!startDate && !endDate) return true; // No filtering if no range specified
+	
+	// Normalize the meeting date to start of day for comparison
+	const normalizedDate = new Date(date);
+	normalizedDate.setHours(0, 0, 0, 0);
+	
+	if (startDate) {
+		const start = new Date(startDate);
+		start.setHours(0, 0, 0, 0); // Start of day
+		if (normalizedDate < start) return false;
+	}
+	
+	if (endDate) {
+		const end = new Date(endDate);
+		end.setHours(23, 59, 59, 999); // End of day
+		if (normalizedDate > end) return false;
+	}
+	
+	return true;
+}
+
+// Check if title matches the filter (case-insensitive partial match)
+function isTitleMatch(title: string, filter: string): boolean {
+	if (!filter) return true; // No filtering if no filter specified
+	return title.toLowerCase().includes(filter.toLowerCase());
+}
+
+// Meeting metadata interface
+interface MeetingInfo {
+	url: string;
+	title: string;
+	date: string;
+	parsedDate: Date | null;
+}
+
+// Filter meetings based on date range and title
+function filterMeetings(meetings: MeetingInfo[], filters: {
+	dateStart?: string;
+	dateEnd?: string;
+	titleFilter?: string;
+}): { filtered: MeetingInfo[], excluded: MeetingInfo[] } {
+	const filtered: MeetingInfo[] = [];
+	const excluded: MeetingInfo[] = [];
+	
+	for (const meeting of meetings) {
+		const dateMatch = isDateInRange(meeting.parsedDate, filters.dateStart || '', filters.dateEnd || '');
+		const titleMatch = isTitleMatch(meeting.title, filters.titleFilter || '');
+		
+		if (dateMatch && titleMatch) {
+			filtered.push(meeting);
+		} else {
+			excluded.push(meeting);
+		}
+	}
+	
+	return { filtered, excluded };
+}
+
 test.describe('auth setup', () => {
 	test('login and save storage state', async ({ page, context }) => {
 		// Setup flows can be slow; extend the overall test timeout
@@ -662,12 +751,43 @@ test.describe('auth setup', () => {
 				await page.waitForTimeout(500);
 				await page.evaluate(() => { window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }); });
 				await page.waitForTimeout(1000);
-				const meetingLinks = await page.evaluate(() => {
-					const links = document.querySelectorAll('a[href*="fathom.video/calls/"]');
-					const uniqueLinks = new Set<string>();
-					links.forEach(link => { const href = (link as HTMLAnchorElement).href; if (href && href.includes('fathom.video/calls/')) uniqueLinks.add(href); });
-					return Array.from(uniqueLinks);
+				const meetingInfos = await page.evaluate(() => {
+					// Get all meeting thumbnail containers
+					const thumbnails = document.querySelectorAll('call-gallery-thumbnail');
+					const meetings: Array<{ url: string; title: string; date: string }> = [];
+					
+					thumbnails.forEach(thumbnail => {
+						// Extract URL
+						const linkElement = thumbnail.querySelector('a[href*="fathom.video/calls/"]');
+						if (!linkElement) return;
+						const url = (linkElement as HTMLAnchorElement).href;
+						
+						// Extract title
+						const titleElement = thumbnail.querySelector('[data-call-gallery-thumbnail-title]');
+						const title = titleElement?.textContent?.trim() || 'Unknown Meeting';
+						
+						// Extract date - look for the date list item
+						const dateElement = thumbnail.querySelector('li.flex.flex-shrink-0.text-default.font-normal.text-white.opacity-70') ||
+						                    thumbnail.querySelector('li:first-child'); // Fallback
+						const date = dateElement?.textContent?.trim() || 'Unknown Date';
+						
+						meetings.push({ url, title, date });
+					});
+					
+					// Remove duplicates based on URL
+					const uniqueMeetings = new Map<string, { url: string; title: string; date: string }>();
+					meetings.forEach(meeting => {
+						uniqueMeetings.set(meeting.url, meeting);
+					});
+					
+					return Array.from(uniqueMeetings.values());
 				});
+				// Convert to MeetingInfo format with parsed dates
+				const meetingInfosWithDates: MeetingInfo[] = meetingInfos.map(m => ({
+					...m,
+					parsedDate: parseMeetingDate(m.date)
+				}));
+				
 				// Update final count on indicator
 				await page.evaluate((count) => {
 					const indicator = document.getElementById('scroll-indicator');
@@ -680,16 +800,16 @@ test.describe('auth setup', () => {
 							(indicator as HTMLElement).style.background = '#2196F3'; 
 						}
 					}
-				}, meetingLinks.length);
+				}, meetingInfos.length);
 				await page.waitForTimeout(2000);
 				await page.evaluate(() => { const indicator = document.getElementById('scroll-indicator'); if (indicator) { (indicator as HTMLElement).style.transition = 'opacity 1s ease-out'; (indicator as HTMLElement).style.opacity = '0'; setTimeout(() => indicator.remove(), 1000); } });
-				return meetingLinks;
+				return meetingInfosWithDates;
 			}
 			
-			let allMeetingLinks: string[] = [];
+			let allMeetings: MeetingInfo[] = [];
 			
 			try {
-				allMeetingLinks = await scrollToLoadAll();
+				allMeetings = await scrollToLoadAll();
 			} catch (error) {
 				console.warn('[auth] Error during scrolling:', error);
 				console.info('[auth] Continuing with authentication despite scroll error...');
@@ -700,11 +820,59 @@ test.describe('auth setup', () => {
 				});
 			}
 			
+			// Apply filters if configured
+			let meetingsToProcess = allMeetings;
+			let excludedMeetings: MeetingInfo[] = [];
+			
+			const hasFilters = env.meetingDateStart || env.meetingDateEnd || env.meetingTitleFilter;
+			if (hasFilters) {
+				const filterResult = filterMeetings(allMeetings, {
+					dateStart: env.meetingDateStart,
+					dateEnd: env.meetingDateEnd,
+					titleFilter: env.meetingTitleFilter
+				});
+				meetingsToProcess = filterResult.filtered;
+				excludedMeetings = filterResult.excluded;
+			}
+			
 			// Log total meetings found
 			console.info('');
 			console.info('================================================');
 			console.info(`📊 MEETING DISCOVERY COMPLETE`);
-			console.info(`Found ${allMeetingLinks.length} total meetings on the page`);
+			console.info(`Found ${allMeetings.length} total meetings on the page`);
+			
+			if (hasFilters) {
+				console.info('');
+				console.info('🔍 FILTERS APPLIED:');
+				if (env.meetingDateStart) {
+					const startDate = new Date(env.meetingDateStart);
+					startDate.setHours(0, 0, 0, 0);
+					console.info(`   Start Date: ${env.meetingDateStart} (including all meetings from ${startDate.toDateString()})`);
+				}
+				if (env.meetingDateEnd) {
+					const endDate = new Date(env.meetingDateEnd);
+					endDate.setHours(23, 59, 59, 999);
+					console.info(`   End Date: ${env.meetingDateEnd} (including all meetings through ${endDate.toDateString()})`);
+				}
+				if (env.meetingTitleFilter) console.info(`   Title Contains: "${env.meetingTitleFilter}"`);
+				console.info('');
+				console.info(`✅ Meetings matching filters: ${meetingsToProcess.length}`);
+				console.info(`❌ Meetings excluded: ${excludedMeetings.length}`);
+				
+				if (excludedMeetings.length > 0 && excludedMeetings.length <= 10) {
+					console.info('');
+					console.info('Excluded meetings:');
+					excludedMeetings.forEach((m, i) => {
+						console.info(`   ${i + 1}. "${m.title}" - ${m.date}`);
+					});
+				} else if (excludedMeetings.length > 10) {
+					console.info(`   (Showing first 10 of ${excludedMeetings.length} excluded meetings)`);
+					excludedMeetings.slice(0, 10).forEach((m, i) => {
+						console.info(`   ${i + 1}. "${m.title}" - ${m.date}`);
+					});
+				}
+			}
+			
 			if (process.env.TRANSCRIPT_PATH) {
 				console.info(`Transcripts will be saved to: ${getTranscriptPath()}`);
 			}
@@ -713,12 +881,12 @@ test.describe('auth setup', () => {
 			
 			// Visit each meeting page if configured to do so
 			const maxMeetingsToVisit = Number(process.env.MAX_MEETINGS_TO_VISIT || '0');
-			const shouldVisitMeetings = maxMeetingsToVisit > 0 && allMeetingLinks.length > 0;
+			const shouldVisitMeetings = maxMeetingsToVisit > 0 && meetingsToProcess.length > 0;
 			
 			if (shouldVisitMeetings) {
-				const meetingsToVisit = allMeetingLinks.slice(0, maxMeetingsToVisit);
+				const meetingsToVisit = meetingsToProcess.slice(0, maxMeetingsToVisit);
 				console.info('================================================');
-				console.info(`📊 VISITING ${meetingsToVisit.length} OUT OF ${allMeetingLinks.length} MEETINGS`);
+				console.info(`📊 VISITING ${meetingsToVisit.length} OUT OF ${allMeetings.length} MEETINGS`);
 				console.info('================================================');
 				console.info('');
 				
@@ -732,7 +900,8 @@ test.describe('auth setup', () => {
 				};
 				
 				for (let i = 0; i < meetingsToVisit.length; i++) {
-					const meetingUrl = meetingsToVisit[i];
+					const meeting = meetingsToVisit[i];
+					const meetingUrl = meeting.url;
 					const meetingId = meetingUrl.split('/').pop();
 					
 					console.info(`[auth] Visiting meeting ${i + 1}/${meetingsToVisit.length}: ${meetingId}`);
@@ -786,24 +955,28 @@ test.describe('auth setup', () => {
 						
 						console.info(`[auth] ✅ Successfully visited meeting ${meetingId}`);
 						
-						// Extract meeting name and date
-						let meetingName = 'Unknown Meeting';
-						let meetingDate = 'Unknown Date';
+						// Use metadata from listing or extract from detail page
+						let meetingName = meeting.title || 'Unknown Meeting';
+						let meetingDate = meeting.date || 'Unknown Date';
 						
 						try {
-							// Extract meeting name from the editable span
-							meetingName = await page.locator('[data-video-call-chip-name] span[contenteditable="true"]')
+							// Try to get more accurate data from the detail page
+							const detailName = await page.locator('[data-video-call-chip-name] span[contenteditable="true"]')
 								.textContent()
-								.catch(() => 'Unknown Meeting') || 'Unknown Meeting';
+								.catch(() => null);
 							
-							// Extract meeting date
-							meetingDate = await page.locator('video-call-chip .text-small.font-medium.text-gray-90')
+							const detailDate = await page.locator('video-call-chip .text-small.font-medium.text-gray-90')
 								.textContent()
-								.catch(() => 'Unknown Date') || 'Unknown Date';
+								.catch(() => null);
+							
+							// Use detail page data if available
+							if (detailName) meetingName = detailName;
+							if (detailDate) meetingDate = detailDate;
 							
 							console.info(`[auth] Meeting: "${meetingName}" - ${meetingDate}`);
 						} catch (error) {
-							console.warn('[auth] Could not extract meeting details:', error);
+							console.warn('[auth] Could not extract meeting details from page:', error);
+							console.info(`[auth] Using listing data: "${meetingName}" - ${meetingDate}`);
 						}
 						
 						// Try to get transcript with retry logic
@@ -1165,7 +1338,7 @@ ${transcriptText}`;
 				console.info('✅ MEETING VISITS COMPLETE');
 				console.info('================================================');
 				console.info('');
-			} else if (allMeetingLinks.length > 0) {
+			} else if (meetingsToProcess.length > 0) {
 				console.info('[auth] Meeting visits disabled. Set MAX_MEETINGS_TO_VISIT env var to visit meetings.');
 			}
 		} // End of scrolling section

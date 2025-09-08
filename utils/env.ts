@@ -29,6 +29,10 @@ export const env = {
 	headless: process.env.HEADLESS === 'true',
 	minimized: process.env.MINIMIZED === 'true',
 	skipScroll: process.env.SKIP_SCROLL === 'true',
+	// Meeting filtering options
+	meetingDateStart: process.env.MEETING_DATE_START ?? '', // Format: YYYY-MM-DD
+	meetingDateEnd: process.env.MEETING_DATE_END ?? '', // Format: YYYY-MM-DD
+	meetingTitleFilter: process.env.MEETING_TITLE_FILTER ?? '', // Partial match filter
 };
 
 

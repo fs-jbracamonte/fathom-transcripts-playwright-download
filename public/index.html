@@ -29,8 +29,13 @@
 		.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 		.field { margin-bottom: 10px; }
 		label { display: block; margin-bottom: 6px; font-size: 12px; color: var(--md-subtext); }
-		input[type="text"], input[type="password"], input[type="number"], select { width: 100%; background: var(--md-surface-2); color: var(--md-text); border: 1px solid var(--md-border); border-radius: 8px; padding: 8px 10px; outline: none; transition: border-color .15s ease; }
+		input[type="text"], input[type="password"], input[type="number"], input[type="date"], select { width: 100%; background: var(--md-surface-2); color: var(--md-text); border: 1px solid var(--md-border); border-radius: 8px; padding: 8px 10px; outline: none; transition: border-color .15s ease; }
 		input:focus, select:focus { border-color: var(--md-primary); box-shadow: 0 0 0 2px rgba(79,140,255,0.15); }
+		/* Style date picker icon */
+		input[type="date"]::-webkit-calendar-picker-indicator {
+			filter: invert(0.8);
+			cursor: pointer;
+		}
 		.actions { display: flex; gap: 10px; }
 		button { background: var(--md-primary); color: var(--md-on-primary); border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; transition: transform .04s ease, background .2s ease; }
 		button.secondary { background: #233045; color: var(--md-text); }
@@ -83,13 +88,25 @@
 				<input type="password" id="password" placeholder="********" autocomplete="current-password">
 				<div id="err-password" class="error" style="display:none"></div>
 			</div>
+			<h2 style="margin-top: 16px;">Meeting Filters (Optional)</h2>
+			<div class="helper" style="margin-bottom: 10px;">Leave empty to extract all meetings, or filter by date range and/or title</div>
 			<div class="row">
 				<div class="field">
-					<label>Max Meetings to Visit (0 disables)</label>
-					<input type="number" id="maxMeetings" min="0" value="0">
-					<div id="err-meetings" class="error" style="display:none"></div>
+					<label>Start Date</label>
+					<input type="date" id="meetingDateStart">
+					<div id="err-date-start" class="error" style="display:none"></div>
+				</div>
+				<div class="field">
+					<label>End Date</label>
+					<input type="date" id="meetingDateEnd">
+					<div id="err-date-end" class="error" style="display:none"></div>
 				</div>
 			</div>
+			<div class="field">
+				<label>Title Filter (case-insensitive)</label>
+				<input type="text" id="meetingTitleFilter" placeholder="e.g., standup, weekly, 1:1">
+			</div>
+			<input type="hidden" id="maxMeetings" value="9999">
 			<div class="field">
 				<label>Transcript Save Location</label>
 				<div style="display: flex; gap: 8px;">
@@ -98,7 +115,7 @@
 				</div>
 				<div id="err-transcript-path" class="error" style="display:none"></div>
 			</div>
-			<div class="helper">Runs headless and masks sensitive info in logs. Advanced options use safe defaults.</div>
+			<div class="helper">Runs headless and masks sensitive info in logs.</div>
 			<div class="actions" style="margin-top:10px;">
 				<button id="btn-start">Start Extraction</button>
 				<button class="secondary" id="btn-cancel">Cancel</button>
@@ -171,11 +188,14 @@
 				secureMode: DEFAULTS.secureMode,
 				minimized: DEFAULTS.minimized,
 				skipScroll: DEFAULTS.skipScroll,
-				maxMeetings: Number($('maxMeetings').value || 0),
+				maxMeetings: 9999, // Always extract all meetings matching filters
 				waitTimeoutMs: DEFAULTS.waitTimeoutMs,
 				navTimeoutMs: DEFAULTS.navTimeoutMs,
 				downloadDir: DEFAULTS.downloadDir,
 				transcriptPath: $('transcriptPath').value.trim(),
+				meetingDateStart: $('meetingDateStart').value.trim(),
+				meetingDateEnd: $('meetingDateEnd').value.trim(),
+				meetingTitleFilter: $('meetingTitleFilter').value.trim(),
 			};
 		}
 
@@ -186,19 +206,45 @@
 			el.style.display = msg ? 'block' : 'none';
 		}
 
+		function isValidDate(dateStr) {
+			if (!dateStr) return true; // Empty is valid (optional)
+			// HTML5 date inputs already validate format, just check if it's a valid date
+			const date = new Date(dateStr);
+			return date instanceof Date && !isNaN(date.getTime());
+		}
+
 		function validate(settings) {
 			let ok = true;
 			setFieldError('err-username','');
 			setFieldError('err-password','');
-			setFieldError('err-meetings','');
 			setFieldError('err-transcript-path','');
+			setFieldError('err-date-start','');
+			setFieldError('err-date-end','');
 
 			if (!settings.username) { setFieldError('err-username','Username is required'); ok = false; }
 			else if (!isValidEmail(settings.username)) { setFieldError('err-username','Enter a valid email'); ok = false; }
 
 			if (!settings.password) { setFieldError('err-password','Password is required'); ok = false; }
 
-			if (!Number.isInteger(settings.maxMeetings) || settings.maxMeetings < 0) { setFieldError('err-meetings','Enter a number >= 0'); ok = false; }
+			// Validate date fields (optional but must be valid if provided)
+			if (settings.meetingDateStart && !isValidDate(settings.meetingDateStart)) {
+				setFieldError('err-date-start','Invalid date');
+				ok = false;
+			}
+			if (settings.meetingDateEnd && !isValidDate(settings.meetingDateEnd)) {
+				setFieldError('err-date-end','Invalid date');
+				ok = false;
+			}
+			
+			// Check date range logic
+			if (settings.meetingDateStart && settings.meetingDateEnd) {
+				const start = new Date(settings.meetingDateStart);
+				const end = new Date(settings.meetingDateEnd);
+				if (start > end) {
+					setFieldError('err-date-end','End date must be after start date');
+					ok = false;
+				}
+			}
 
 			// Transcript path is optional - empty means use default
 
@@ -212,7 +258,7 @@
 		}
 
 		function setRunning(isRunning) {
-			['authProvider','username','password','maxMeetings','transcriptPath','btn-browse-transcript','btn-start'].forEach(id => {
+			['authProvider','username','password','transcriptPath','btn-browse-transcript','btn-start','meetingDateStart','meetingDateEnd','meetingTitleFilter'].forEach(id => {
 				const el = $(id);
 				if (el) el.disabled = isRunning;
 			});
@@ -226,10 +272,33 @@
 			}
 		}
 
-		['authProvider','username','password','maxMeetings'].forEach(id => {
+		['authProvider','username','password','meetingDateStart','meetingDateEnd','meetingTitleFilter'].forEach(id => {
 			const el = $(id);
 			el.addEventListener('input', () => updateStartEnabled());
 			el.addEventListener('change', () => updateStartEnabled());
+		});
+		
+		// Update date constraints when dates change
+		$('meetingDateStart').addEventListener('change', function() {
+			const startDate = this.value;
+			if (startDate) {
+				// Set minimum end date to start date
+				$('meetingDateEnd').setAttribute('min', startDate);
+			} else {
+				// Clear constraint when date is cleared
+				$('meetingDateEnd').removeAttribute('min');
+			}
+		});
+		
+		$('meetingDateEnd').addEventListener('change', function() {
+			const endDate = this.value;
+			if (endDate) {
+				// Set maximum start date to end date
+				$('meetingDateStart').setAttribute('max', endDate);
+			} else {
+				// Clear constraint when date is cleared
+				$('meetingDateStart').removeAttribute('max');
+			}
 		});
 
 		async function loadPersisted() {
@@ -238,8 +307,10 @@
 				const s = res?.settings || {};
 				if (s.authProvider) $('authProvider').value = s.authProvider;
 				if (s.username) $('username').value = s.username;
-				if (Number.isInteger(s.maxMeetings)) $('maxMeetings').value = String(s.maxMeetings);
 				if (s.transcriptPath) $('transcriptPath').value = s.transcriptPath;
+				if (s.meetingDateStart) $('meetingDateStart').value = s.meetingDateStart;
+				if (s.meetingDateEnd) $('meetingDateEnd').value = s.meetingDateEnd;
+				if (s.meetingTitleFilter) $('meetingTitleFilter').value = s.meetingTitleFilter;
 				if (s.username) {
 					const sec = await window.api.getSecret({ account: s.username });
 					if (sec?.ok && sec.password) $('password').value = sec.password;
@@ -265,7 +336,14 @@
 			setRunning(true);
 			appendLog('Starting extraction (browser will run in background)...');
 			try {
-				await window.api.saveSettings({ authProvider: settings.authProvider, username: settings.username, maxMeetings: settings.maxMeetings, transcriptPath: settings.transcriptPath });
+				await window.api.saveSettings({ 
+					authProvider: settings.authProvider, 
+					username: settings.username, 
+					transcriptPath: settings.transcriptPath,
+					meetingDateStart: settings.meetingDateStart,
+					meetingDateEnd: settings.meetingDateEnd,
+					meetingTitleFilter: settings.meetingTitleFilter
+				});
 				if (settings.username && settings.password) {
 					await window.api.setSecret({ account: settings.username, password: settings.password });
 				}

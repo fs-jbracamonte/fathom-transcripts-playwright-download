@@ -12,6 +12,7 @@ A tool that automatically logs into Fathom.video and saves meeting transcripts a
 - 📊 **Detailed reporting**: Shows which transcripts succeeded or failed
 - 💾 **Unique filenames**: Prevents overwrites with date + meeting name + ID format
 - 🔒 **Secure mode**: Hide sensitive data during screen sharing
+- 🔍 **Meeting filtering**: Filter by date range and/or meeting title
 
 ## 🚀 Quick Start
 
@@ -34,7 +35,7 @@ A tool that automatically logs into Fathom.video and saves meeting transcripts a
 
 ### Step 3: Run Playwright from the CLI (Headless or Headed)
 
-- Headless login + optional transcript extraction:
+- Headless login without transcript extraction:
 ```bash
 # Windows PowerShell
 $env:HEADLESS="true"; $env:MAX_MEETINGS_TO_VISIT="0"; npm run test:setup
@@ -111,7 +112,7 @@ MAX_MEETINGS_TO_VISIT=5 npx playwright test auth.setup --project=setup
 npm run electron
 ```
 2. Fill in Auth Provider, Username, Password.
-3. Optional: set "Max Meetings to Visit" or click "Browse" to choose a Transcript folder.
+3. Optional: Set date range filters, title filter, or choose a custom Transcript folder.
 4. Click "Start Extraction". The browser runs minimized and logs stream into the app.
 5. Use "Transcripts" and "Report" to open output locations.
 
@@ -123,6 +124,48 @@ After running the tool, your transcripts will be saved in:
 - Each file contains the full meeting transcript with metadata
   
 You can override the location by setting `TRANSCRIPT_PATH` in the environment or using the Electron app's "Browse" button.
+
+## 🔍 Filtering Meetings
+
+You can filter which meetings to extract by date range and/or title. Make sure to set `MAX_MEETINGS_TO_VISIT` to a value greater than 0 to enable transcript extraction:
+
+### Filter by Date Range
+```bash
+# Windows PowerShell
+$env:MEETING_DATE_START="2024-01-01"; $env:MEETING_DATE_END="2024-12-31"; npm run test:setup
+
+# Mac/Linux  
+MEETING_DATE_START=2024-01-01 MEETING_DATE_END=2024-12-31 npm run test:setup
+```
+
+### Filter by Meeting Title
+```bash
+# Windows PowerShell
+$env:MEETING_TITLE_FILTER="standup"; npm run test:setup
+
+# Mac/Linux
+MEETING_TITLE_FILTER=standup npm run test:setup
+```
+
+### Combine Filters
+```bash
+# Windows PowerShell
+$env:MEETING_DATE_START="2024-09-01"; $env:MEETING_TITLE_FILTER="weekly"; $env:MAX_MEETINGS_TO_VISIT="5"; npm run test:setup
+
+# Mac/Linux
+MEETING_DATE_START=2024-09-01 MEETING_TITLE_FILTER=weekly MAX_MEETINGS_TO_VISIT=5 npm run test:setup
+```
+
+**Note:** Filters are applied before limiting by `MAX_MEETINGS_TO_VISIT`. For example, if you have 100 meetings but only 10 match your filters, and you set `MAX_MEETINGS_TO_VISIT=5`, only the first 5 matching meetings will be processed.
+
+### Using Filters in the Electron App
+
+The Electron app provides a user-friendly interface for filtering:
+- **Date Range**: Use the date pickers to select start and end dates
+- **Title Filter**: Enter keywords to match in meeting titles
+- Leave all filters empty to extract all meetings
+
+The app automatically extracts all meetings that match your filter criteria.
 
 ## 🔧 Troubleshooting
 
@@ -212,6 +255,13 @@ MINIMIZED=false
 # Skip scrolling to load all meetings (default: false)
 SKIP_SCROLL=false
 
+# Filter meetings by date range (format: YYYY-MM-DD)
+MEETING_DATE_START=                   # e.g., 2024-01-01
+MEETING_DATE_END=                     # e.g., 2024-12-31
+
+# Filter meetings by title (case-insensitive partial match)
+MEETING_TITLE_FILTER=                 # e.g., "standup" or "weekly"
+
 # Path settings
 LOGIN_PATH=/login              # Login page path (default: /login)
 DATA_PAGE_PATH=/home           # Page after login (default: /home)
@@ -240,7 +290,7 @@ NAV_TIMEOUT_MS=30000           # Navigation timeout (default: 30000)
 ## 🖥️ Running From Electron vs CLI
 
 - CLI is ideal for automation and CI. Use `HEADLESS=true` for silent runs.
-- Electron UI is ideal for interactive SSO flows (Google/Microsoft). Use the UI to install browsers, enter credentials, and monitor logs.
+- Electron UI is ideal for interactive SSO flows (Google/Microsoft) and easy filtering. Use the UI to enter credentials, set date/title filters, and monitor logs.
 
 ## 📦 Build the Installer (Electron Builder)
 

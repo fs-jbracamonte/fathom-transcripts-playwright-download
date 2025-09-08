@@ -265,6 +265,10 @@ ipcMain.handle('run:start', async (event, settings) => {
 		MAX_MEETINGS_TO_VISIT: String(settings.maxMeetings ?? '0'),
 		DOWNLOAD_DIR: settings.downloadDir || 'downloads',
 		TRANSCRIPT_PATH: settings.transcriptPath || '',
+		// Meeting filter options
+		MEETING_DATE_START: settings.meetingDateStart || '',
+		MEETING_DATE_END: settings.meetingDateEnd || '',
+		MEETING_TITLE_FILTER: settings.meetingTitleFilter || '',
 	};
 	
 	// Use bundled browsers in production or test mode
